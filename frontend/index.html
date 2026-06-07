@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Is This Video AI-Generated?</title>
+<link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+  <main class="page">
+    <header>
+      <h1>Is This Video AI-Generated?</h1>
+      <p class="subtitle">Upload a short video. We analyze the visual track and audio track separately, then fuse the results into one score.</p>
+    </header>
+
+    <section id="dropzone" class="dropzone">
+      <input type="file" id="file-input" accept="video/mp4,video/quicktime,video/webm,video/x-matroska,.mp4,.mov,.webm,.mkv" hidden />
+      <div class="dropzone-content">
+        <p class="dropzone-title">Drag &amp; drop a video here</p>
+        <p class="dropzone-sub">or click to choose a file — MP4 / MOV / WebM / MKV, up to 100&nbsp;MB and 60&nbsp;seconds</p>
+      </div>
+    </section>
+
+    <section id="progress" class="progress hidden">
+      <div class="spinner"></div>
+      <p id="progress-text">Uploading and analyzing — this can take a minute on CPU…</p>
+    </section>
+
+    <section id="error" class="error hidden"></section>
+
+    <section id="result" class="result hidden">
+      <div class="score-block">
+        <div id="score-number" class="score-number">--</div>
+        <div class="score-caption">Estimated likelihood the video is AI-generated (0–100)</div>
+        <div id="confidence-band" class="badge"></div>
+      </div>
+
+      <div class="subscores">
+        <div class="subscore-card">
+          <h3>Visual track</h3>
+          <div class="subscore-value" id="visual-score">--</div>
+          <p class="subscore-detail" id="visual-detail"></p>
+          <p class="subscore-model" id="visual-model"></p>
+        </div>
+        <div class="subscore-card">
+          <h3>Audio track</h3>
+          <div class="subscore-value" id="audio-score">--</div>
+          <p class="subscore-detail" id="audio-detail"></p>
+          <p class="subscore-model" id="audio-model"></p>
+        </div>
+      </div>
+
+      <div class="meta">
+        <p id="fusion-method"></p>
+        <p id="frames-info"></p>
+        <ul id="warnings" class="warnings"></ul>
+      </div>
+    </section>
+
+    <footer class="disclaimer">
+      <strong>Disclaimer:</strong> This score reflects the likelihood the video matches <em>known</em> AI-generation
+      and deepfake patterns learned by the underlying detectors. It is <strong>not proof</strong> that a video
+      is real or fake. Detectors generalize poorly to generation methods they were never trained on, and can be
+      wrong in both directions. Do not treat this number as authoritative ground truth — use it as one signal
+      among many.
+    </footer>
+  </main>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>
