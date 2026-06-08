@@ -19,19 +19,29 @@ from .schemas import ModalityResult
 logger = logging.getLogger("video_ai.visual")
 
 
+def _normalize_label(label: str) -> str:
+    """
+    Reduce a label to lowercase alphanumerics only, so variants like
+    "Real-ism", "LABEL_1: fake", "Real Image" all collapse to a comparable
+    form before substring matching — keeps the keyword check robust against
+    punctuation/whitespace/casing differences in swapped-in models' label sets.
+    """
+    return "".join(ch for ch in label.lower() if ch.isalnum())
+
+
 def fake_probability(pipe_output: list[dict]) -> Optional[float]:
     """
     Map a `transformers` image-classification output (list of {label, score})
-    to P(fake) in [0, 1]. Labels are matched by substring so this keeps working
-    if a swapped-in model uses different label casing/wording (e.g. "Fake"/"Real",
-    "deepfake"/"real", "synthetic"/"authentic").
+    to P(fake) in [0, 1]. Labels are normalized then matched by substring so
+    this keeps working if a swapped-in model uses different label casing/wording/
+    punctuation (e.g. "Fake"/"Real", "deepfake"/"real", "synthetic"/"authentic").
     """
     fake_score = None
     real_score = None
     for entry in pipe_output:
-        label = str(entry.get("label", "")).lower()
+        label = _normalize_label(str(entry.get("label", "")))
         score = float(entry.get("score", 0.0))
-        if any(k in label for k in ("fake", "deepfake", "synthetic", "ai", "generated")):
+        if any(k in label for k in ("fake", "deepfake", "synthetic", "aigenerated", "generated")):
             fake_score = score if fake_score is None else max(fake_score, score)
         elif any(k in label for k in ("real", "authentic", "genuine", "pristine")):
             real_score = score if real_score is None else max(real_score, score)

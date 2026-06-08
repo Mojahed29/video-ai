@@ -152,10 +152,12 @@ function renderExplainability(data) {
 
   visualExplain.classList.toggle("hidden", !temporal && !saliency);
 
-  // --- Audio: per-segment timeline ---
+  // --- Audio: per-segment timeline + raw classifier output ---
   const audioExplain = document.getElementById("audio-explain");
   const timelineEl = document.getElementById("audio-timeline");
+  const rawOutputEl = document.getElementById("audio-raw-output");
   const timeline = data.audio?.timeline;
+  const rawOutput = data.audio?.raw_model_output;
   timelineEl.innerHTML = "";
 
   if (timeline && timeline.length) {
@@ -169,8 +171,14 @@ function renderExplainability(data) {
         (segment.score === null ? "N/A" : `${segment.score.toFixed(1)}`);
       timelineEl.appendChild(bar);
     });
-    audioExplain.classList.remove("hidden");
-  } else {
-    audioExplain.classList.add("hidden");
   }
+
+  if (rawOutput && rawOutput.length) {
+    const parts = rawOutput.map((entry) => `${entry.label}: ${(entry.score * 100).toFixed(1)}%`);
+    rawOutputEl.textContent = `Raw classifier output — ${parts.join(", ")}`;
+  } else {
+    rawOutputEl.textContent = "";
+  }
+
+  audioExplain.classList.toggle("hidden", !(timeline && timeline.length) && !(rawOutput && rawOutput.length));
 }

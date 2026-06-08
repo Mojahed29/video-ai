@@ -17,6 +17,10 @@ class ModalityResult(BaseModel):
     saliency: Optional[dict] = None
     # Audio only: per-segment "how synthetic does THIS part sound" timeline
     timeline: Optional[list[dict]] = None
+    # Raw {label, score} pairs returned by the classifier for the whole track/clip,
+    # exposed so users can sanity-check how the 0-100 score was derived from the
+    # model's own labels (useful when a score looks saturated/miscalibrated).
+    raw_model_output: Optional[list[dict]] = None
 
 
 class AnalyzeResponse(BaseModel):

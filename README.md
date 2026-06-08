@@ -110,8 +110,17 @@ development. Returned as `visual.temporal_consistency`.
   *where* the signal is strongest rather than one number for the whole track.
   Toggle with `ENABLE_AUDIO_TIMELINE` / tune segment count and length with
   `AUDIO_TIMELINE_*`.
+- **Audio — raw classifier output** (`audio.raw_model_output`): the exact
+  `{label, score}` pairs the audio model returned for the whole clip, exposed
+  as-is so you can see precisely how the 0–100 score was derived from the
+  model's *own* labels. This is most useful when a score looks saturated
+  (near 0 or near 100): `audio.detail` adds an explicit caution note in that
+  case, since small fine-tuned speech-deepfake classifiers can be poorly
+  calibrated on compressed/resampled real-world audio that differs from their
+  narrow training distribution — a confidently-wrong "100% fake" reading on
+  ordinary audio is a calibration artifact, not a verdict.
 
-> Both are **post-hoc, occlusion/segment-based explanations of the model's
+> The saliency heatmap and audio timeline are **post-hoc, occlusion/segment-based explanations of the model's
 > behavior on this specific input** — not architecture-level explanations
 > (e.g. not gradient/attention-based) and not proof of *why* the network
 > learned what it learned. They're meant to build calibrated trust ("here's
@@ -249,6 +258,10 @@ Multipart form upload, field name `file`. Returns:
       { "start_seconds": 1.45, "end_seconds": 2.9, "score": 58.7 },
       { "start_seconds": 2.9, "end_seconds": 4.35, "score": 53.0 },
       { "start_seconds": 4.35, "end_seconds": 5.8, "score": 49.1 }
+    ],
+    "raw_model_output": [
+      { "label": "bona-fide", "score": 0.495 },
+      { "label": "spoof", "score": 0.505 }
     ]
   },
   "confidence_band": "high",
@@ -313,6 +326,35 @@ Observed pipeline behavior (verified during development):
 > pretrained model weights, which are downloaded from Hugging Face Hub on
 > first run — they are not bundled with this repo (per the "no manual dataset
 > downloads, inference only" requirement).
+
+---
+
+## A note on saturated audio scores (e.g. "always near 100")
+
+Label sets returned by `transformers` audio-classification pipelines vary in
+spelling/punctuation/casing across model versions ("Bona-Fide" vs "bonafide"
+vs "LABEL_0: real", …). `audio_model.fake_probability` now **normalizes**
+labels (lowercases and strips all non-alphanumeric characters) before the
+substring match, so a label like `"Bona-Fide"` correctly matches the
+`"bonafide"` keyword instead of silently falling through to the fake-side
+keywords and producing a near-100% reading regardless of what the model
+actually predicted (the same fix was mirrored into `visual_model.py` for
+consistency).
+
+Beyond label-matching bugs, a persistently saturated reading can also be a
+genuine **calibration problem**: small fine-tuned speech-deepfake classifiers
+are trained on narrow datasets (often studio-quality TTS/voice-clone samples
+vs. genuine recordings) and can generalize poorly to compressed, resampled,
+background-noisy real-world video audio — confidently mislabeling ordinary
+speech as "spoof". To make this diagnosable without needing to read server
+logs:
+- `audio.raw_model_output` now exposes the exact `{label, score}` pairs the
+  model returned for the clip (also rendered in the UI's "Where in the clip?"
+  panel), so you can see precisely how the 0–100 number was derived; and
+- `audio.detail` appends an explicit caution note whenever the score lands
+  at the extreme ends of the scale (≥ 97 or ≤ 3), reminding you that a
+  confidently-saturated reading on ordinary audio is more likely a
+  calibration artifact of a narrowly-trained model than a verdict.
 
 ---
 
