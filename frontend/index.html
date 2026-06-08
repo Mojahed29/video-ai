@@ -41,12 +41,23 @@
           <div class="subscore-value" id="visual-score">--</div>
           <p class="subscore-detail" id="visual-detail"></p>
           <p class="subscore-model" id="visual-model"></p>
+          <details class="explain hidden" id="visual-explain">
+            <summary>Why this score?</summary>
+            <p class="explain-line" id="visual-temporal"></p>
+            <img id="visual-saliency-img" class="saliency-img hidden" alt="Heatmap of the most suspicious detected face" />
+            <p class="explain-caption" id="visual-saliency-caption"></p>
+          </details>
         </div>
         <div class="subscore-card">
           <h3>Audio track</h3>
           <div class="subscore-value" id="audio-score">--</div>
           <p class="subscore-detail" id="audio-detail"></p>
           <p class="subscore-model" id="audio-model"></p>
+          <details class="explain hidden" id="audio-explain">
+            <summary>Where in the clip?</summary>
+            <div id="audio-timeline" class="timeline"></div>
+            <p class="explain-caption">Each bar independently re-scores that time segment — taller / redder bars sound more synthetic to the model.</p>
+          </details>
         </div>
       </div>
 

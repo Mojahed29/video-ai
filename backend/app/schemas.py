@@ -10,6 +10,14 @@ class ModalityResult(BaseModel):
     model_used: Optional[str] = None
     detail: Optional[str] = None   # short human-readable extra info (e.g. "18/24 frames had a detectable face")
 
+    # --- Explainability extras (populated only where applicable & enabled) -------
+    # Visual only: heuristic frame-to-frame "jitteriness" signal, see temporal_analysis.py
+    temporal_consistency: Optional[dict] = None
+    # Visual only: occlusion-based saliency heatmap of the most-suspicious face/frame
+    saliency: Optional[dict] = None
+    # Audio only: per-segment "how synthetic does THIS part sound" timeline
+    timeline: Optional[list[dict]] = None
+
 
 class AnalyzeResponse(BaseModel):
     overall_score: float

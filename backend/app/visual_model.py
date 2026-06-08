@@ -13,13 +13,13 @@ from typing import Optional
 
 from PIL import Image
 
-from . import model_runtime
+from . import config, explainability, model_runtime, temporal_analysis
 from .schemas import ModalityResult
 
 logger = logging.getLogger("video_ai.visual")
 
 
-def _fake_probability(pipe_output: list[dict]) -> Optional[float]:
+def fake_probability(pipe_output: list[dict]) -> Optional[float]:
     """
     Map a `transformers` image-classification output (list of {label, score})
     to P(fake) in [0, 1]. Labels are matched by substring so this keeps working
@@ -55,7 +55,16 @@ def score_frames(frame_paths: list[Path]) -> ModalityResult:
 
     detector = model_runtime.get_face_detector()
 
+    def score_image(image: Image.Image) -> Optional[float]:
+        try:
+            return fake_probability(loaded.pipe(image, top_k=None))
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Visual classifier failed on an image: %s", exc)
+            return None
+
     frame_scores: list[float] = []
+    ordered_targets: list[Image.Image] = []  # one representative crop/frame per scored timestamp, in order
+    most_suspicious: Optional[tuple[Image.Image, float]] = None
     frames_with_face = 0
 
     for frame_path in frame_paths:
@@ -72,20 +81,17 @@ def score_frames(frame_paths: list[Path]) -> ModalityResult:
         else:
             targets = [image]
 
-        per_frame_face_scores = []
-        for target in targets:
-            try:
-                output = loaded.pipe(target, top_k=None)
-            except Exception as exc:  # noqa: BLE001
-                logger.warning("Visual classifier failed on a frame: %s", exc)
-                continue
-            prob = _fake_probability(output)
-            if prob is not None:
-                per_frame_face_scores.append(prob)
+        scored_targets = [(t, p) for t in targets if (p := score_image(t)) is not None]
+        if not scored_targets:
+            continue
 
-        if per_frame_face_scores:
-            # Worst case (most-fake-looking face/frame) drives the per-frame score.
-            frame_scores.append(max(per_frame_face_scores))
+        # Worst case (most-fake-looking face/frame) drives this timestamp's score
+        # and is what we track for temporal-consistency and saliency purposes.
+        target_img, target_prob = max(scored_targets, key=lambda pair: pair[1])
+        frame_scores.append(target_prob)
+        ordered_targets.append(target_img)
+        if most_suspicious is None or target_prob > most_suspicious[1]:
+            most_suspicious = (target_img, target_prob)
 
     if not frame_scores:
         return ModalityResult(
@@ -94,7 +100,7 @@ def score_frames(frame_paths: list[Path]) -> ModalityResult:
             model_used=loaded.model_id,
         )
 
-    avg_prob = sum(frame_scores) / len(frame_scores)
+    classifier_avg = sum(frame_scores) / len(frame_scores)
     detail = (
         f"{frames_with_face}/{len(frame_paths)} sampled frames had a detectable face "
         f"({len(frame_scores)} frames scored)."
@@ -103,11 +109,33 @@ def score_frames(frame_paths: list[Path]) -> ModalityResult:
              f"scored full frames instead ({len(frame_scores)} frames scored)."
     )
 
+    # --- Temporal consistency: blend a heuristic frame-to-frame "jitteriness"
+    # signal into the per-frame classifier average (see temporal_analysis.py).
+    temporal = None
+    final_prob = classifier_avg
+    if config.TEMPORAL_SIGNAL_WEIGHT > 0:
+        temporal = temporal_analysis.compute_temporal_signal(ordered_targets)
+        if temporal is not None:
+            w = config.TEMPORAL_SIGNAL_WEIGHT
+            final_prob = (1 - w) * classifier_avg + w * temporal["inconsistency_score"]
+            detail += (
+                f" Frame-to-frame consistency nudged the score by "
+                f"{(final_prob - classifier_avg) * 100:+.1f} points (weight {w:.0%})."
+            )
+
+    # --- Explainability: occlusion-based saliency heatmap of the single
+    # most-suspicious detected face/frame (see explainability.py).
+    saliency = None
+    if config.ENABLE_VISUAL_SALIENCY and most_suspicious is not None:
+        saliency = explainability.build_visual_saliency(most_suspicious[0], score_image)
+
     return ModalityResult(
         status="assessed",
-        score=round(avg_prob * 100, 1),
+        score=round(final_prob * 100, 1),
         model_used=loaded.model_id,
         detail=detail,
+        temporal_consistency=temporal,
+        saliency=saliency,
     )
 
 

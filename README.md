@@ -20,12 +20,16 @@ upload (mp4/mov/webm/mkv, ≤100MB, ≤60s)
    │     └─ MTCNN face detection per frame
    │           ├─ face(s) found → crop & run visual classifier on each face
    │           └─ no face       → run visual classifier on the full frame
-   │     └─ VISUAL sub-score = mean P(fake) over scored frames   →  0–100
+   │     └─ classifier average ──┐
+   │     └─ + temporal-consistency "jitteriness" heuristic (weight 15%)
+   │                              ├─→ VISUAL sub-score = P(fake)        →  0–100
+   │     └─ + occlusion saliency heatmap of the most-suspicious face/frame
    │
    ├─ ffmpeg → mono 16kHz WAV
    │     └─ RMS silence check (skip model if track is silent/near-silent)
    │     └─ AUDIO sub-score = P(synthetic speech)                →  0–100
    │           (or "not assessed" if no audio / silent / model failure)
+   │     └─ + per-segment "where in the clip" timeline
    │
    └─ FUSION: weighted average  (default 60% visual / 40% audio)
          · if one modality is missing → use the other alone, and say so
@@ -67,9 +71,51 @@ AUDIO_MODEL_ID  = "your-org/your-model"   # any binary real/fake audio-classific
 ```
 
 Labels are matched by substring (`"fake"/"real"`, `"spoof"/"bonafide"`,
-`"synthetic"/"authentic"`, …) in `visual_model._fake_probability` /
-`audio_model._fake_probability`, so most binary real-vs-fake classifiers work
+`"synthetic"/"authentic"`, …) in `visual_model.fake_probability` /
+`audio_model.fake_probability`, so most binary real-vs-fake classifiers work
 without further changes.
+
+---
+
+## Beyond the base score: temporal consistency & explainability
+
+Two extra heuristic signals are layered on top of the raw classifier outputs.
+Both are **model-agnostic** (they reuse the existing pipelines — no new
+detector models to pick/verify) and **toggleable** in `config.py`.
+
+### Temporal consistency (visual)
+A single-frame classifier structurally cannot see one of the most commonly
+cited deepfake artifacts: frame-to-frame instability (blending-boundary
+flicker, texture "swimming"). `temporal_analysis.py` measures the coefficient
+of variation of pixel-difference magnitude between the consecutive crops/frames
+that were scored, squashes it into a `[0, 1]` "inconsistency" score, and blends
+it into the visual sub-score at a small configurable weight
+(`TEMPORAL_SIGNAL_WEIGHT`, default `0.15`). Steady natural motion scores near
+zero; bursty, sporadic jumps (the kind blending-boundary flicker produces)
+score high — this was verified with synthetic test sequences during
+development. Returned as `visual.temporal_consistency`.
+
+### Explainability overlays
+- **Visual — occlusion saliency** (`visual.saliency`): the single
+  most-suspicious detected face/frame is divided into a grid; each cell is
+  masked and the image is re-scored. Cells whose removal drops the
+  fake-probability the most are highlighted (red-tinted) in a heatmap returned
+  as a base64 PNG — i.e. "here's what the model relied on for *this* image."
+  Costs `SALIENCY_GRID_SIZE²` extra forward passes on **one** crop (default
+  4×4 = 16), not every frame, to stay fast on CPU. Toggle with
+  `ENABLE_VISUAL_SALIENCY`.
+- **Audio — per-segment timeline** (`audio.timeline`): the clip is split into
+  a handful of equal, non-overlapping windows, each independently re-scored,
+  producing a "how synthetic does *this part* sound" timeline so users can see
+  *where* the signal is strongest rather than one number for the whole track.
+  Toggle with `ENABLE_AUDIO_TIMELINE` / tune segment count and length with
+  `AUDIO_TIMELINE_*`.
+
+> Both are **post-hoc, occlusion/segment-based explanations of the model's
+> behavior on this specific input** — not architecture-level explanations
+> (e.g. not gradient/attention-based) and not proof of *why* the network
+> learned what it learned. They're meant to build calibrated trust ("here's
+> what drove this number"), not to serve as independent evidence.
 
 ---
 
@@ -85,14 +131,16 @@ video-ai/
 │   │   ├── video_utils.py     ffmpeg/ffprobe: probing, frame & audio extraction
 │   │   ├── visual_model.py    face detection + visual deepfake scoring
 │   │   ├── audio_model.py     silence detection + synthetic-speech scoring
+│   │   ├── temporal_analysis.py   heuristic frame-to-frame consistency signal
+│   │   ├── explainability.py      occlusion saliency heatmap + audio timeline
 │   │   ├── fusion.py          weighted-average fusion + confidence band
 │   │   ├── model_runtime.py   lazy model loading, device selection, fallback
 │   │   └── schemas.py         pydantic response models
 │   └── requirements.txt
 ├── frontend/
-│   ├── index.html             single-page UI (drag & drop, results card)
+│   ├── index.html             single-page UI (drag & drop, results card, "why this score?" panels)
 │   ├── style.css
-│   └── app.js                 upload, progress, result rendering
+│   └── app.js                 upload, progress, result + explainability rendering
 └── README.md
 ```
 
@@ -178,13 +226,30 @@ Multipart form upload, field name `file`. Returns:
     "status": "assessed",
     "score": 71.2,
     "model_used": "prithivMLmods/Deep-Fake-Detector-v2-Model",
-    "detail": "18/24 sampled frames had a detectable face (24 frames scored)."
+    "detail": "18/24 sampled frames had a detectable face (24 frames scored). Frame-to-frame consistency nudged the score by +2.1 points (weight 15%).",
+    "temporal_consistency": {
+      "coefficient_of_variation": 0.74,
+      "inconsistency_score": 0.62,
+      "note": "Heuristic signal: higher values mean more erratic frame-to-frame change than typical natural video motion + compression."
+    },
+    "saliency": {
+      "method": "occlusion saliency (4x4 grid)",
+      "baseline_fake_probability": 71.2,
+      "image_base64": "data:image/png;base64,iVBORw0KG...",
+      "note": "Heuristic, post-hoc explanation: brighter/red regions are where masking that part of the image reduced the model's fake-probability the most for THIS input — i.e. the regions it relied on most. Not an architecture-level explanation."
+    }
   },
   "audio": {
     "status": "assessed",
     "score": 50.5,
     "model_used": "MelodyMachine/Deepfake-audio-detection-V2",
-    "detail": "Scored 5.8s of audio at 16000 Hz (RMS=0.0421)."
+    "detail": "Scored 5.8s of audio at 16000 Hz (RMS=0.0421).",
+    "timeline": [
+      { "start_seconds": 0.0, "end_seconds": 1.45, "score": 41.2 },
+      { "start_seconds": 1.45, "end_seconds": 2.9, "score": 58.7 },
+      { "start_seconds": 2.9, "end_seconds": 4.35, "score": 53.0 },
+      { "start_seconds": 4.35, "end_seconds": 5.8, "score": 49.1 }
+    ]
   },
   "confidence_band": "high",
   "fusion_method": "Weighted average: 60% visual + 40% audio",
@@ -232,6 +297,17 @@ Observed pipeline behavior (verified during development):
   (`cpu`/`cuda`) and the model IDs that successfully loaded (or, on load
   failure, the fallback that was attempted and the resulting error — the
   modality is then marked `"not_assessed"` rather than crashing).
+* `temporal_consistency` / `saliency` / `timeline` were validated with
+  standalone unit checks (mocked scoring functions, since real model weights
+  require Hugging Face Hub access): a synthetic "steady camera pan" sequence
+  produced `coefficient_of_variation ≈ 0.0` (inconsistency `0.08`), while a
+  "bursty flicker" sequence (mostly-static frames punctuated by sudden
+  region-wide jumps — modeling blending-boundary artifacts) produced
+  `coefficient_of_variation ≈ 1.10` (inconsistency `0.88`), confirming the
+  heuristic separates steady natural motion from erratic frame-to-frame change
+  as intended. The occlusion-saliency and audio-timeline builders were
+  similarly confirmed to produce valid base64 PNG overlays and per-segment
+  score lists end-to-end.
 
 > Note: actual `visual_subscore`/`audio_subscore` numbers depend on the real
 > pretrained model weights, which are downloaded from Hugging Face Hub on

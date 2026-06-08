@@ -36,6 +36,26 @@ SILENCE_RMS_THRESHOLD = 0.003   # below this average RMS, audio is treated as si
 VISUAL_WEIGHT = 0.6
 AUDIO_WEIGHT = 0.4
 
+# --- Temporal consistency (visual) -------------------------------------------
+# Heuristic frame-to-frame "jitteriness" signal (see temporal_analysis.py) that
+# is blended into the per-frame classifier's average. Set to 0 to disable.
+TEMPORAL_SIGNAL_WEIGHT = 0.15
+
+# --- Explainability -----------------------------------------------------------
+# Occlusion-based saliency heatmap for the single most-suspicious detected
+# face/frame (see explainability.py). Costs SALIENCY_GRID_SIZE^2 extra forward
+# passes on ONE crop — not every frame — so it stays cheap on CPU.
+ENABLE_VISUAL_SALIENCY = True
+SALIENCY_GRID_SIZE = 4
+
+# Per-segment "how synthetic does THIS part sound" timeline for the audio
+# track (see explainability.py). Costs up to AUDIO_TIMELINE_MAX_SEGMENTS extra
+# audio-classifier calls on short, non-overlapping chunks of the same clip.
+ENABLE_AUDIO_TIMELINE = True
+AUDIO_TIMELINE_MAX_SEGMENTS = 8
+AUDIO_TIMELINE_MIN_DURATION = 3.0          # below this, a timeline isn't meaningful
+AUDIO_TIMELINE_MIN_SEGMENT_SECONDS = 1.5   # each segment is at least this long
+
 # Device selection: "cuda" if available else "cpu" (resolved at runtime in
 # model_runtime.py — kept here only as an override switch).
 FORCE_CPU = False

@@ -15,14 +15,14 @@ from typing import Optional
 import numpy as np
 import soundfile as sf
 
-from . import config, model_runtime
+from . import config, explainability, model_runtime
 from .schemas import ModalityResult
 
 logger = logging.getLogger("video_ai.audio")
 
 
-def _fake_probability(pipe_output: list[dict]) -> Optional[float]:
-    """Same label-substring matching strategy as the visual model (see visual_model._fake_probability)."""
+def fake_probability(pipe_output: list[dict]) -> Optional[float]:
+    """Same label-substring matching strategy as the visual model (see visual_model.fake_probability)."""
     fake_score = None
     real_score = None
     for entry in pipe_output:
@@ -65,23 +65,30 @@ def score_audio(audio_path: Optional[Path]) -> ModalityResult:
         logger.error("Audio model failed to load: %s", exc)
         return ModalityResult(status="not_assessed", reason=f"Audio model failed to load: {exc}")
 
-    try:
-        output = loaded.pipe({"raw": samples, "sampling_rate": sample_rate}, top_k=None)
-    except Exception as exc:  # noqa: BLE001
-        logger.warning("Audio classifier failed: %s", exc)
-        return ModalityResult(status="not_assessed", reason=f"Audio classifier failed on this clip: {exc}", model_used=loaded.model_id)
+    def score_chunk(chunk: np.ndarray, sr: int) -> Optional[float]:
+        try:
+            return fake_probability(loaded.pipe({"raw": chunk, "sampling_rate": sr}, top_k=None))
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Audio classifier failed on a chunk: %s", exc)
+            return None
 
-    prob = _fake_probability(output)
+    prob = score_chunk(samples, sample_rate)
     if prob is None:
         return ModalityResult(
             status="not_assessed",
-            reason="Audio classifier returned an unrecognized label set.",
+            reason="Audio classifier returned an unrecognized label set or failed on this clip.",
             model_used=loaded.model_id,
         )
+
+    # --- Explainability: per-segment "how synthetic does THIS part sound" timeline.
+    timeline = None
+    if config.ENABLE_AUDIO_TIMELINE:
+        timeline = explainability.build_audio_timeline(samples, sample_rate, score_chunk)
 
     return ModalityResult(
         status="assessed",
         score=round(prob * 100, 1),
         model_used=loaded.model_id,
         detail=f"Scored {samples.size / sample_rate:.1f}s of audio at {sample_rate} Hz (RMS={rms:.4f}).",
+        timeline=timeline,
     )
