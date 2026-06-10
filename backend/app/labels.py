@@ -16,14 +16,16 @@ from __future__ import annotations
 from collections.abc import Iterable, Mapping
 from typing import Optional
 
-# Substrings that identify the "fake / synthetic / generated" class.
+# Substrings (already normalized to alphanumerics) that identify the
+# "fake / synthetic / generated" class. We avoid the bare token "ai" because
+# it's too short and matches unrelated words; "aigenerated"/"generated" are safe.
 FAKE_KEYWORDS: tuple[str, ...] = (
     "fake",
     "deepfake",
     "spoof",
     "synthetic",
     "generated",
-    "ai",
+    "aigenerated",
     "tts",
 )
 
@@ -34,13 +36,23 @@ REAL_KEYWORDS: tuple[str, ...] = (
     "genuine",
     "pristine",
     "bonafide",
-    "bona-fide",
     "human",
 )
 
 
 def _matches(label: str, keywords: Iterable[str]) -> bool:
     return any(keyword in label for keyword in keywords)
+
+
+def _normalize(label: str) -> str:
+    """Reduce a label to lowercase alphanumerics.
+
+    Collapses variants like ``"Bona-fide"``, ``"bona fide"`` and
+    ``"LABEL_0: spoof"`` to a comparable form (``"bonafide"``, ``"bonafide"``,
+    ``"label0spoof"``) so punctuation/spacing in a swapped-in model's label
+    names doesn't silently break substring matching.
+    """
+    return "".join(ch for ch in label.lower() if ch.isalnum())
 
 
 def fake_probability(pipe_output: Iterable[Mapping[str, object]]) -> Optional[float]:
@@ -54,7 +66,7 @@ def fake_probability(pipe_output: Iterable[Mapping[str, object]]) -> Optional[fl
     real_score: Optional[float] = None
 
     for entry in pipe_output:
-        label = str(entry.get("label", "")).lower()
+        label = _normalize(str(entry.get("label", "")))
         try:
             score = float(entry.get("score", 0.0))  # type: ignore[arg-type]
         except (TypeError, ValueError):

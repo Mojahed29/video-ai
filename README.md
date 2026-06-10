@@ -72,7 +72,7 @@ load directly through `transformers.pipeline` — no training required.
 | Track | Primary model | Fallback model |
 |-------|---------------|----------------|
 | **Visual** (deepfake / synthetic image) | [`prithivMLmods/Deep-Fake-Detector-v2-Model`](https://huggingface.co/prithivMLmods/Deep-Fake-Detector-v2-Model) — ViT fine-tuned for binary Real/Fake image classification | [`prithivMLmods/deepfake-detector-model-v1`](https://huggingface.co/prithivMLmods/deepfake-detector-model-v1) |
-| **Audio** (synthetic / spoofed speech) | [`MelodyMachine/Deepfake-audio-detection-V2`](https://huggingface.co/MelodyMachine/Deepfake-audio-detection-V2) — Wav2Vec2-based binary Real/Fake speech classifier | [`mo-thecreator/Deepfake-audio-detection`](https://huggingface.co/mo-thecreator/Deepfake-audio-detection) |
+| **Audio** (synthetic / spoofed speech) | [`mo-thecreator/Deepfake-audio-detection`](https://huggingface.co/mo-thecreator/Deepfake-audio-detection) — Wav2Vec2-based binary Real/Fake speech classifier (better calibrated than the V2 fine-tune) | [`MelodyMachine/Deepfake-audio-detection-V2`](https://huggingface.co/MelodyMachine/Deepfake-audio-detection-V2) |
 | **Face localization** | [`facenet-pytorch`](https://github.com/timesler/facenet-pytorch) MTCNN — *not* a deepfake classifier, only crops faces for the visual model | — |
 
 If a primary model ID fails to download or load (pulled, renamed, unreachable),
@@ -156,6 +156,7 @@ prefix.
 | `VIDEO_AI_MAX_FILE_SIZE_MB` | `100` | Upload size limit |
 | `VIDEO_AI_MAX_DURATION_SECONDS` | `60` | Duration limit |
 | `VIDEO_AI_VISUAL_WEIGHT` / `_AUDIO_WEIGHT` | `0.6` / `0.4` | Fusion weights (normalized) |
+| `VIDEO_AI_AUDIO_CALIBRATION_TEMPERATURE` | `1.5` | Soften over-confident audio scores (1.0 = off) |
 | `VIDEO_AI_CALIBRATION_ENABLED` | `false` | Uncertainty-aware calibration (see below) |
 | `VIDEO_AI_FORCE_CPU` | `false` | Ignore an available GPU |
 | `VIDEO_AI_CORS_ALLOW_ORIGINS` | `localhost:8000, 127.0.0.1:8000` | Comma-separated origins (replaces `*`) |
@@ -304,6 +305,31 @@ frame is reported less confidently than the same number from many frames. When
 it changes a score, the API exposes the pre-calibration value as `raw_score` and
 the UI shows "raw → calibrated". With calibration off, the raw model numbers are
 reported exactly. **No accuracy claim is implied in either mode.**
+
+---
+
+## Troubleshooting: audio always reads ~100% AI
+
+Small Wav2Vec2 deepfake-audio detectors are notoriously **over-confident** on
+ordinary recorded/compressed audio and can pin the audio sub-score near 100 on
+genuine clips (which then drags the fused score up). This is a model-quality
+limitation, not a bug in the scoring. Mitigations, in order of impact:
+
+1. **Use the better-calibrated base model** (now the default):
+   `VIDEO_AI_AUDIO_MODEL_ID=mo-thecreator/Deepfake-audio-detection`. The V2
+   fine-tune is more saturated; it remains available as the fallback.
+2. **Raise the softening temperature**, e.g. `VIDEO_AI_AUDIO_CALIBRATION_TEMPERATURE=2.5`.
+   Temperature tempers borderline scores but, by design, only nudges extreme
+   ones (a raw 0.999 is a very large logit) — so it complements, not replaces, a
+   better model.
+3. **Lean on the visual track / lower the audio weight**, e.g.
+   `VIDEO_AI_VISUAL_WEIGHT=0.75` and `VIDEO_AI_AUDIO_WEIGHT=0.25`.
+4. **Swap in any other** `audio-classification` real/fake model via
+   `VIDEO_AI_AUDIO_MODEL_ID` — label matching is tolerant of naming variants.
+
+The result now also shows the **raw vs. softened** audio score and flags when the
+model's raw reading is near an extreme, so a saturated value is visible rather
+than hidden.
 
 ---
 

@@ -38,11 +38,15 @@ class Settings(BaseSettings):
 
     # --- Audio (synthetic speech) classifier --------------------------------
     # Wav2Vec2-based binary real-vs-fake speech classifier.
+    #
+    # Default to the BASE model rather than the narrowly fine-tuned V2: the V2
+    # fine-tune tends to be over-confident on ordinary compressed/resampled
+    # video audio and reports "fake" at ~100% on genuine clips. The base model
+    # is generally better calibrated. Swap them back via env if you prefer V2.
+    # https://huggingface.co/mo-thecreator/Deepfake-audio-detection
+    audio_model_id: str = "mo-thecreator/Deepfake-audio-detection"
     # https://huggingface.co/MelodyMachine/Deepfake-audio-detection-V2
-    audio_model_id: str = "MelodyMachine/Deepfake-audio-detection-V2"
-    # Used only if the primary model fails to download/load (the base model the
-    # primary was fine-tuned from).
-    audio_model_fallback_id: str = "mo-thecreator/Deepfake-audio-detection"
+    audio_model_fallback_id: str = "MelodyMachine/Deepfake-audio-detection-V2"
 
     # --- Pipeline parameters ------------------------------------------------
     num_frames: int = 24  # evenly spaced frames sampled from the video
@@ -59,6 +63,14 @@ class Settings(BaseSettings):
     # score (behaviour preserved); the timeline is supplementary.
     audio_timeline_windows: int = 6
     audio_timeline_min_window_s: float = 2.0
+
+    # Temperature softening of the audio probability (logit-space). Small audio
+    # deepfake detectors are over-confident on real-world clips; a value > 1
+    # tempers borderline readings toward 50%. 1.0 = no change. This applies to
+    # both the overall audio score and each timeline window. (Visual scores are
+    # not softened by default; raise the visual value only if needed.)
+    audio_calibration_temperature: float = 1.5
+    visual_calibration_temperature: float = 1.0
 
     # --- Fusion -------------------------------------------------------------
     visual_weight: float = 0.6

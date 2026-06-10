@@ -70,6 +70,8 @@ def test_audio_unrecognized_labels_is_not_assessed(monkeypatch):
 
 def test_audio_assessed_produces_score_and_timeline(monkeypatch):
     # 8s of audible audio -> multiple timeline windows.
+    # Temperature 1.0 isolates this from the default audio softening.
+    monkeypatch.setattr(audio_model.settings, "audio_calibration_temperature", 1.0)
     monkeypatch.setattr(audio_model.sf, "read", lambda *a, **k: (np.full(16000 * 8, 0.2, dtype="float32"), 16000))
     monkeypatch.setattr(
         model_runtime,
@@ -82,6 +84,23 @@ def test_audio_assessed_produces_score_and_timeline(monkeypatch):
     assert result.model_used == "test/model"
     assert len(result.timeline) >= 2  # windowed timeline
     assert all(0 <= p.score <= 100 for p in result.timeline)
+
+
+def test_audio_temperature_softens_overconfident_score(monkeypatch):
+    # A model that screams "100% fake" should be tempered below 100 when
+    # temperature > 1 (the "always 100" mitigation).
+    monkeypatch.setattr(audio_model.settings, "audio_calibration_temperature", 2.0)
+    monkeypatch.setattr(audio_model.sf, "read", lambda *a, **k: (np.full(16000 * 4, 0.2, dtype="float32"), 16000))
+    monkeypatch.setattr(
+        model_runtime,
+        "get_audio_pipeline",
+        lambda: _fake_loaded([{"label": "fake", "score": 0.99}, {"label": "real", "score": 0.01}]),
+    )
+    result = audio_model.score_audio("dummy.wav")
+    assert result.status == "assessed"
+    assert result.score < 99.0  # softened
+    assert result.raw_score == pytest.approx(99.0)  # original model score preserved
+    assert "Softened" in (result.detail or "")
 
 
 # --------------------------------------------------------------------------- #

@@ -56,8 +56,8 @@ def score_audio(audio_path: Optional[Path]) -> ModalityResult:
         logger.error("Audio model failed to load: %s", exc)
         return ModalityResult(status="not_assessed", reason=f"Audio model failed to load: {exc}")
 
-    whole_clip = _classify(loaded.pipe, samples, sample_rate)
-    if whole_clip is None:
+    raw_prob = _classify(loaded.pipe, samples, sample_rate)
+    if raw_prob is None:
         return ModalityResult(
             status="not_assessed",
             reason="Audio classifier returned an unrecognized label set or failed on this clip.",
@@ -65,16 +65,29 @@ def score_audio(audio_path: Optional[Path]) -> ModalityResult:
         )
 
     total_seconds = samples.size / sample_rate
-    raw = round(whole_clip * 100, 1)
-    score = calibration.calibrate_audio(raw, audio_seconds=total_seconds, settings=settings)
-    timeline = _build_timeline(loaded.pipe, samples, sample_rate, whole_clip)
+    temperature = settings.audio_calibration_temperature
+    soft_prob = calibration.temperature_scale(raw_prob, temperature)
+
+    raw = round(raw_prob * 100, 1)
+    score = calibration.calibrate_audio(round(soft_prob * 100, 1), audio_seconds=total_seconds, settings=settings)
+    timeline = _build_timeline(loaded.pipe, samples, sample_rate, soft_prob, temperature)
+
+    detail = f"Scored {total_seconds:.1f}s of audio at {sample_rate} Hz (RMS={rms:.4f})."
+    if temperature != 1.0 and score != raw:
+        detail += f" Softened from a raw model score of {raw} (temperature {temperature:g})."
+    if raw_prob >= 0.97 or raw_prob <= 0.03:
+        detail += (
+            " Heads-up: the model's raw score is near the extreme of the scale. Small audio "
+            "deepfake detectors are often poorly calibrated on real-world recordings, so treat a "
+            "near-0 or near-100 audio reading with extra skepticism."
+        )
 
     return ModalityResult(
         status="assessed",
         score=score,
         raw_score=raw if score != raw else None,
         model_used=loaded.model_id,
-        detail=f"Scored {total_seconds:.1f}s of audio at {sample_rate} Hz (RMS={rms:.4f}).",
+        detail=detail,
         timeline=timeline,
     )
 
@@ -89,8 +102,14 @@ def _classify(pipe, samples: np.ndarray, sample_rate: int) -> Optional[float]:
     return fake_probability(output)
 
 
-def _build_timeline(pipe, samples: np.ndarray, sample_rate: int, whole_clip: float) -> list[TimelinePoint]:
-    """Score evenly sized windows of the clip for the explainability timeline."""
+def _build_timeline(
+    pipe, samples: np.ndarray, sample_rate: int, soft_whole_clip: float, temperature: float
+) -> list[TimelinePoint]:
+    """Score evenly sized windows of the clip for the explainability timeline.
+
+    Window scores are temperature-softened with the same factor as the overall
+    score, so the timeline is on the same scale as the headline number.
+    """
     total_seconds = samples.size / sample_rate
     n_windows = min(
         settings.audio_timeline_windows,
@@ -99,7 +118,7 @@ def _build_timeline(pipe, samples: np.ndarray, sample_rate: int, whole_clip: flo
 
     if n_windows <= 1:
         # Too short to split meaningfully: one window == the whole-clip score.
-        return [TimelinePoint(t_start=0.0, t_end=round(total_seconds, 2), score=round(whole_clip * 100, 1))]
+        return [TimelinePoint(t_start=0.0, t_end=round(total_seconds, 2), score=round(soft_whole_clip * 100, 1))]
 
     timeline: list[TimelinePoint] = []
     window_samples = samples.size // n_windows
@@ -109,6 +128,7 @@ def _build_timeline(pipe, samples: np.ndarray, sample_rate: int, whole_clip: flo
         prob = _classify(pipe, samples[start:end], sample_rate)
         if prob is None:
             continue
+        prob = calibration.temperature_scale(prob, temperature)
         timeline.append(
             TimelinePoint(
                 t_start=round(start / sample_rate, 2),

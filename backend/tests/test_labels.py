@@ -54,3 +54,19 @@ def test_malformed_score_is_skipped_gracefully():
     out = [{"label": "fake", "score": "not-a-number"}, {"label": "real", "score": 0.8}]
     # The fake entry is unparseable -> falls back to the real entry.
     assert fake_probability(out) == pytest.approx(0.2)
+
+
+@pytest.mark.parametrize(
+    "real_label",
+    ["Bona-fide", "bona fide", "LABEL_1: Real", "Authentic ", "GENUINE"],
+)
+def test_punctuation_and_spacing_normalized(real_label):
+    # Hyphens/spaces/prefixes must not break matching (regression for label-name variants).
+    out = [{"label": real_label, "score": 0.85}]
+    assert fake_probability(out) == pytest.approx(0.15)
+
+
+def test_label_zero_one_only_is_unrecognized():
+    # Bare LABEL_0 / LABEL_1 carry no real/fake meaning -> None (not_assessed).
+    out = [{"label": "LABEL_0", "score": 0.6}, {"label": "LABEL_1", "score": 0.4}]
+    assert fake_probability(out) is None

@@ -50,3 +50,30 @@ def test_confidence_is_capped_at_one():
     s = _settings()
     # More than "full" signal must not push the score away from the raw value.
     assert calibration.calibrate_visual(90.0, frames_scored=100, settings=s) == pytest.approx(90.0)
+
+
+# --- temperature scaling --------------------------------------------------- #
+def test_temperature_one_is_identity():
+    assert calibration.temperature_scale(0.9, 1.0) == pytest.approx(0.9)
+    assert calibration.temperature_scale(0.02, 1.0) == pytest.approx(0.02)
+
+
+def test_temperature_none_passthrough():
+    assert calibration.temperature_scale(None, 1.5) is None
+
+
+def test_temperature_above_one_pulls_toward_half():
+    # 0.9 should move toward 0.5 (down) when softened.
+    softened = calibration.temperature_scale(0.9, 2.0)
+    assert 0.5 < softened < 0.9
+    # 0.1 should move toward 0.5 (up).
+    softened_low = calibration.temperature_scale(0.1, 2.0)
+    assert 0.1 < softened_low < 0.5
+
+
+def test_temperature_preserves_neutral_point():
+    assert calibration.temperature_scale(0.5, 3.0) == pytest.approx(0.5)
+
+
+def test_temperature_below_one_sharpens():
+    assert calibration.temperature_scale(0.7, 0.5) > 0.7

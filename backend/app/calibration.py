@@ -4,20 +4,46 @@ Honest, opt-in score calibration.
 These detectors output a raw probability that the model has *no* ground-truth
 guarantee for, and we deliberately do **not** fabricate a fitted calibration
 curve (that would require a labelled validation set we don't ship). What we do
-offer instead is *uncertainty-aware shrinkage*: when a score is derived from
-very little signal — only a couple of scored frames, or under a few seconds of
-audio — it is pulled toward the neutral ``50`` prior, so the reported number
-reflects how much the pipeline actually had to work with.
+offer two honest, transparent transforms:
 
-Calibration is **disabled by default** (identity transform), which preserves
-the raw model numbers exactly. Enable it with ``VIDEO_AI_CALIBRATION_ENABLED=true``.
-No accuracy claim is implied in either mode — see the README disclaimer.
+1. *Temperature scaling* (``temperature_scale``): small fine-tuned deepfake
+   detectors — the audio ones especially — are badly over-confident on ordinary
+   compressed/resampled real-world media and pin the score near 0 or 100. A
+   temperature > 1 softens the probability in logit space toward 50%. It cannot
+   make a wrong model right (a logit of "0.999 fake" is so large that even a
+   strong temperature only nudges it), but it tempers borderline readings.
+
+2. *Uncertainty-aware shrinkage* (``calibrate_visual``/``calibrate_audio``):
+   when a score is derived from very little signal (a couple of scored frames,
+   under a few seconds of audio) it is pulled toward the neutral ``50`` prior.
+   This is **opt-in** (``VIDEO_AI_CALIBRATION_ENABLED=true``) and identity by
+   default, preserving the raw numbers.
+
+No accuracy claim is implied by either transform — see the README disclaimer.
 """
 from __future__ import annotations
+
+import math
+from typing import Optional
 
 from .settings import Settings
 
 NEUTRAL_SCORE = 50.0
+
+
+def temperature_scale(prob: Optional[float], temperature: float) -> Optional[float]:
+    """
+    Soften an over-confident probability in logit space.
+
+    ``temperature == 1.0`` is a no-op. ``temperature > 1`` pulls confident
+    scores toward 0.5; ``temperature < 1`` sharpens them. Returns ``None``
+    unchanged so callers can short-circuit on "not assessed".
+    """
+    if prob is None or temperature == 1.0:
+        return prob
+    p = min(max(prob, 1e-6), 1.0 - 1e-6)
+    logit = math.log(p / (1.0 - p))
+    return 1.0 / (1.0 + math.exp(-logit / max(1e-6, temperature)))
 
 
 def _shrink(score: float, confidence: float, max_shrink: float) -> float:

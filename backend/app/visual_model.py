@@ -40,6 +40,7 @@ def score_frames(frames: list[ExtractedFrame]) -> ModalityResult:
         return ModalityResult(status="not_assessed", reason=f"Visual model failed to load: {exc}")
 
     detector = model_runtime.get_face_detector()
+    temperature = settings.visual_calibration_temperature
 
     timeline: list[TimelinePoint] = []
     frame_scores: list[float] = []
@@ -73,11 +74,12 @@ def score_frames(frames: list[ExtractedFrame]) -> ModalityResult:
             # Worst case (most fake-looking face/frame) drives the per-frame score.
             frame_prob = max(per_target_scores)
             frame_scores.append(frame_prob)
+            soft = calibration.temperature_scale(frame_prob, temperature)
             timeline.append(
                 TimelinePoint(
                     t_start=frame.timestamp,
                     t_end=frame.timestamp,
-                    score=round(frame_prob * 100, 1),
+                    score=round(soft * 100, 1),
                     note="face" if has_face else "no face",
                 )
             )
@@ -89,8 +91,10 @@ def score_frames(frames: list[ExtractedFrame]) -> ModalityResult:
             model_used=loaded.model_id,
         )
 
-    raw = round(sum(frame_scores) / len(frame_scores) * 100, 1)
-    score = calibration.calibrate_visual(raw, frames_scored=len(frame_scores), settings=settings)
+    raw_prob = sum(frame_scores) / len(frame_scores)
+    raw = round(raw_prob * 100, 1)
+    soft = round(calibration.temperature_scale(raw_prob, temperature) * 100, 1)
+    score = calibration.calibrate_visual(soft, frames_scored=len(frame_scores), settings=settings)
 
     detail = (
         f"{frames_with_face}/{len(frames)} sampled frames had a detectable face "
