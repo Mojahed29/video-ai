@@ -1,71 +1,142 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="UTF-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>Is This Video AI-Generated?</title>
-<link rel="stylesheet" href="/static/style.css" />
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <meta name="color-scheme" content="light" />
+  <meta name="theme-color" content="#234F9C" />
+  <meta name="description" content="Estimate how likely a video is AI-generated or face-swapped by analyzing its visual and audio tracks. A heuristic signal, not a verdict." />
+  <title>Video AI Detector</title>
+  <link rel="stylesheet" href="/static/css/tokens.css" />
+  <link rel="stylesheet" href="/static/css/base.css" />
+  <link rel="stylesheet" href="/static/css/components.css" />
 </head>
 <body>
-  <main class="page">
-    <header>
-      <h1>Is This Video AI-Generated?</h1>
-      <p class="subtitle">Upload a short video. We analyze the visual track and audio track separately, then fuse the results into one score.</p>
+  <a class="skip-link" href="#main">Skip to content</a>
+
+  <div class="page">
+    <header class="site-header">
+      <div class="brand-row">
+        <span class="brand-mark" aria-hidden="true">
+          <!-- shield + waveform: trust + signal analysis -->
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M12 2 4 5v6c0 5 3.5 8 8 11 4.5-3 8-6 8-11V5l-8-3Z" />
+            <path d="M8 12h1.5l1.5 3 2-6 1.5 3H16" />
+          </svg>
+        </span>
+        <span class="eyebrow">Media Integrity&nbsp;·&nbsp;TRA-inspired</span>
+      </div>
+      <h1>Is this video AI&#8209;generated?</h1>
+      <p class="subtitle">
+        Upload a short clip. We score the <strong>visual</strong> and <strong>audio</strong>
+        tracks separately with pretrained deepfake detectors, then fuse them into a single
+        0–100 likelihood — with the evidence shown over time.
+      </p>
     </header>
 
-    <section id="dropzone" class="dropzone">
-      <input type="file" id="file-input" accept="video/mp4,video/quicktime,video/webm,video/x-matroska,.mp4,.mov,.webm,.mkv" hidden />
-      <div class="dropzone-content">
-        <p class="dropzone-title">Drag &amp; drop a video here</p>
-        <p class="dropzone-sub">or click to choose a file — MP4 / MOV / WebM / MKV, up to 100&nbsp;MB and 60&nbsp;seconds</p>
-      </div>
-    </section>
+    <main id="main">
+      <!-- IDLE: dropzone -->
+      <section
+        id="dropzone"
+        class="card dropzone"
+        role="button"
+        tabindex="0"
+        aria-label="Upload a video. Drag and drop a file here, or activate to choose a file. Accepts MP4, MOV, WebM or MKV up to 100 megabytes and 60 seconds."
+        aria-describedby="dz-sub">
+        <input type="file" id="file-input"
+               accept="video/mp4,video/quicktime,video/webm,video/x-matroska,.mp4,.mov,.webm,.mkv"
+               hidden />
+        <span class="dropzone-icon" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M12 16V4" /><path d="m7 9 5-5 5 5" />
+            <path d="M5 16v2a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-2" />
+          </svg>
+        </span>
+        <p class="dropzone-title">Drag &amp; drop a video</p>
+        <p class="dropzone-sub" id="dz-sub">or <strong>click to browse</strong> — analysis runs locally on the server and can take up to a minute on CPU.</p>
+        <span class="dropzone-formats" aria-hidden="true">
+          <span class="format-chip">MP4</span>
+          <span class="format-chip">MOV</span>
+          <span class="format-chip">WebM</span>
+          <span class="format-chip">MKV</span>
+          <span class="format-chip">≤ 100 MB</span>
+          <span class="format-chip">≤ 60 s</span>
+        </span>
+      </section>
 
-    <section id="progress" class="progress hidden">
-      <div class="spinner"></div>
-      <p id="progress-text">Uploading and analyzing — this can take a minute on CPU…</p>
-    </section>
-
-    <section id="error" class="error hidden"></section>
-
-    <section id="result" class="result hidden">
-      <div class="score-block">
-        <div id="score-number" class="score-number">--</div>
-        <div class="score-caption">Estimated likelihood the video is AI-generated (0–100)</div>
-        <div id="confidence-band" class="badge"></div>
-      </div>
-
-      <div class="subscores">
-        <div class="subscore-card">
-          <h3>Visual track</h3>
-          <div class="subscore-value" id="visual-score">--</div>
-          <p class="subscore-detail" id="visual-detail"></p>
-          <p class="subscore-model" id="visual-model"></p>
+      <!-- SELECTED: confirm file -->
+      <section id="file-card" class="card file-card hidden" aria-label="Selected file">
+        <div class="file-row">
+          <span class="file-thumb" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+              <rect x="3" y="5" width="18" height="14" rx="2" /><path d="m10 9 5 3-5 3V9Z" />
+            </svg>
+          </span>
+          <div class="file-meta">
+            <div class="file-name" id="file-name">—</div>
+            <div class="file-sub" id="file-sub">—</div>
+          </div>
         </div>
-        <div class="subscore-card">
-          <h3>Audio track</h3>
-          <div class="subscore-value" id="audio-score">--</div>
-          <p class="subscore-detail" id="audio-detail"></p>
-          <p class="subscore-model" id="audio-model"></p>
+        <div class="file-actions">
+          <button type="button" class="btn btn-primary" id="analyze-btn">Analyze video</button>
+          <button type="button" class="btn btn-ghost" id="change-btn">Choose a different file</button>
         </div>
-      </div>
+      </section>
 
-      <div class="meta">
-        <p id="fusion-method"></p>
-        <p id="frames-info"></p>
-        <ul id="warnings" class="warnings"></ul>
-      </div>
-    </section>
+      <!-- WORKING: progress -->
+      <section id="progress" class="card progress hidden" aria-live="polite" aria-busy="true">
+        <div class="progress-head">
+          <span class="progress-title" id="progress-title">Working…</span>
+          <span class="progress-pct" id="progress-pct" aria-hidden="true"></span>
+        </div>
+        <div class="progress-track" id="progress-track" role="progressbar"
+             aria-valuemin="0" aria-valuemax="100" aria-label="Analysis progress">
+          <div class="progress-fill" id="progress-fill"></div>
+        </div>
+        <ul class="stage-list" id="stage-list"></ul>
+        <div class="file-actions">
+          <button type="button" class="btn btn-danger-ghost" id="cancel-btn">Cancel</button>
+        </div>
+      </section>
 
-    <footer class="disclaimer">
-      <strong>Disclaimer:</strong> This score reflects the likelihood the video matches <em>known</em> AI-generation
-      and deepfake patterns learned by the underlying detectors. It is <strong>not proof</strong> that a video
-      is real or fake. Detectors generalize poorly to generation methods they were never trained on, and can be
-      wrong in both directions. Do not treat this number as authoritative ground truth — use it as one signal
-      among many.
+      <!-- ERROR -->
+      <section id="error" class="card error hidden" role="alert">
+        <span class="error-icon" aria-hidden="true">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="12" cy="12" r="10" /><path d="M12 8v5" /><path d="M12 16h.01" />
+          </svg>
+        </span>
+        <div class="error-body">
+          <h2 id="error-title">Something went wrong</h2>
+          <p id="error-message"></p>
+          <div class="error-actions">
+            <button type="button" class="btn btn-ghost" id="retry-btn">Try another video</button>
+          </div>
+        </div>
+      </section>
+
+      <!-- RESULT -->
+      <section id="result" class="result hidden" aria-live="polite" aria-label="Analysis result"></section>
+    </main>
+
+    <aside class="disclaimer" role="note">
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <circle cx="12" cy="12" r="10" /><path d="M12 16v-4" /><path d="M12 8h.01" />
+      </svg>
+      <p>
+        <strong>This is an estimate, not proof.</strong> The score reflects how strongly the
+        video matches AI-generation and deepfake patterns the underlying detectors were trained
+        to recognize. These models generalize poorly to methods they have never seen and can be
+        wrong in both directions. Treat the number as one signal among many — never as
+        authoritative ground truth.
+      </p>
+    </aside>
+
+    <footer class="site-footer">
+      Inference only · models run via Hugging Face Transformers · ffmpeg for media handling.
     </footer>
-  </main>
+  </div>
 
-  <script src="/static/app.js"></script>
+  <script type="module" src="/static/js/main.js"></script>
 </body>
 </html>

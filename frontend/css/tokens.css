@@ -1,0 +1,118 @@
+/* =============================================================================
+   Design tokens — Video AI Detector
+   Brand: Telecommunications Regulatory Authority (TRA) of Oman.
+   Colors taken from the TRA's own published CSS custom properties
+   (tra.gov.om): deep "TRA blue" #234F9C with teal/cyan accents. Text and
+   semantic colors below are tuned for WCAG-AA contrast on light surfaces.
+   ============================================================================= */
+:root {
+  /* --- TRA brand blue ramp (official) ------------------------------------ */
+  --tra-50:  #f0f4fa;
+  --tra-100: #e3eaf5;
+  --tra-200: #c7d5eb;
+  --tra-300: #a0b7db;
+  --tra-400: #7192c7;
+  --tra-500: #4f73b3;
+  --tra-600: #234F9C; /* primary "TRA blue" */
+  --tra-700: #1d4282;
+  --tra-800: #19366b;
+  --tra-900: #142a54;
+
+  /* --- Accents (official) ------------------------------------------------- */
+  --teal:      #00ABB1; /* decorative only — white text on it fails AA */
+  --teal-text: #007E83; /* AA-safe teal for text/icons on light */
+  --cyan:      #33DEF2;
+  --foundation:#003B3E;
+
+  /* --- Semantic roles ----------------------------------------------------- */
+  --brand:        var(--tra-600);
+  --brand-strong: var(--tra-700);
+  --brand-deep:   var(--tra-900);
+
+  /* Page background + surfaces */
+  --bg:          #eef3fb;            /* soft TRA-tinted base */
+  --bg-grad-1:   #f4f8fe;
+  --bg-grad-2:   #e6eefb;
+  --surface:     #ffffff;           /* cards */
+  --surface-alt: #F8FCFF;           /* elevated/secondary cards (official --card-bg) */
+  --surface-sunken: #f3f7fd;        /* insets, tracks */
+
+  /* Text */
+  --text:      #16223F;             /* headings */
+  --text-body: #2C3A59;             /* body copy */
+  --muted:     #586A8C;             /* secondary text (AA on white & cards) */
+
+  /* Borders / lines */
+  --border:        rgba(35, 79, 156, 0.16);
+  --border-strong: rgba(35, 79, 156, 0.30);
+  --ring:          rgba(35, 79, 156, 0.45);
+
+  /* Score / status scale (likelihood AI-generated) — all AA on light */
+  --score-low:   #0E7A52; /* likely authentic */
+  --score-mid:   #B45309; /* uncertain */
+  --score-high:  #C0362C; /* likely AI */
+
+  /* Status fills + accessible text-on-tint pairs */
+  --success:      #0E7A52; --success-tint: #E3F5EC;
+  --warn:         #B45309; --warn-tint:    #FBEBD7;  --warn-text: #92400E;
+  --danger:       #C0362C; --danger-tint:  #FBE6E4;  --danger-text: #B42318;
+  --info:         var(--tra-700); --info-tint: var(--tra-100);
+
+  /* --- Typography --------------------------------------------------------- */
+  --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
+               Helvetica, Arial, "Apple Color Emoji", sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+
+  --fs-300: 0.78rem;
+  --fs-400: 0.875rem;
+  --fs-500: 1rem;
+  --fs-600: 1.125rem;
+  --fs-700: 1.375rem;
+  --fs-800: 1.75rem;
+  --fs-900: clamp(1.9rem, 1.4rem + 2vw, 2.6rem);
+
+  --lh-tight: 1.15;
+  --lh-snug:  1.35;
+  --lh-base:  1.6;
+
+  /* --- Spacing scale (4px base) ------------------------------------------ */
+  --space-1: 0.25rem;
+  --space-2: 0.5rem;
+  --space-3: 0.75rem;
+  --space-4: 1rem;
+  --space-5: 1.5rem;
+  --space-6: 2rem;
+  --space-7: 2.75rem;
+  --space-8: 3.5rem;
+
+  /* --- Radii -------------------------------------------------------------- */
+  --radius-sm:   8px;
+  --radius:      12px;
+  --radius-lg:   16px;
+  --radius-xl:   22px;
+  --radius-pill: 999px;
+
+  /* --- Shadows (tuned for a light blue theme) ---------------------------- */
+  --shadow-sm: 0 1px 2px rgba(20, 42, 84, 0.06), 0 1px 1px rgba(20, 42, 84, 0.04);
+  --shadow:    0 6px 18px rgba(20, 42, 84, 0.08), 0 2px 6px rgba(20, 42, 84, 0.05);
+  --shadow-lg: 0 18px 48px rgba(20, 42, 84, 0.14), 0 6px 16px rgba(20, 42, 84, 0.08);
+
+  /* --- Motion ------------------------------------------------------------- */
+  --ease: cubic-bezier(0.22, 0.61, 0.36, 1);
+  --dur-1: 120ms;
+  --dur-2: 220ms;
+  --dur-3: 420ms;
+
+  /* --- Layout ------------------------------------------------------------- */
+  --container: 920px;
+  --tap-min: 44px;
+}
+
+/* Respect users who reduce motion: collapse all transition/animation timing. */
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --dur-1: 0ms;
+    --dur-2: 0ms;
+    --dur-3: 0ms;
+  }
+}
