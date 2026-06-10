@@ -84,7 +84,7 @@ function startWorking() {
   });
 
   // Fallback: if upload-progress events never fired, still switch to analysis UI.
-  setTimeout(() => {
+  const fallbackTimer = setTimeout(() => {
     if (!analysisBegun) {
       analysisBegun = true;
       progress.beginAnalysis();
@@ -93,6 +93,7 @@ function startWorking() {
 
   currentAnalysis.promise
     .then((data) => {
+      clearTimeout(fallbackTimer);
       progress.finish();
       setTimeout(() => {
         renderResult(els.result, data, { onReset: goIdle });
@@ -101,6 +102,7 @@ function startWorking() {
       }, 300);
     })
     .catch((err) => {
+      clearTimeout(fallbackTimer);
       if (err && err.kind === "aborted") return; // user cancelled -> handled in cancel
       showError(mapError(err));
     });
