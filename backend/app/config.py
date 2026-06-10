@@ -18,11 +18,23 @@ VISUAL_MODEL_FALLBACK_ID = "prithivMLmods/deepfake-detector-model-v1"
 
 # --- Audio (synthetic speech) classifier ------------------------------------
 # Wav2Vec2-based binary real-vs-fake speech classifier.
+# We default to the BASE model (mo-thecreator/Deepfake-audio-detection) rather
+# than the narrowly fine-tuned V2: the fine-tune tends to be overconfident on
+# ordinary compressed/resampled video audio and report "fake" with near-100%
+# probability on genuine clips. The base model is generally better calibrated.
+# https://huggingface.co/mo-thecreator/Deepfake-audio-detection
+AUDIO_MODEL_ID = "mo-thecreator/Deepfake-audio-detection"
+# Used only if the primary model fails to download/load.
 # https://huggingface.co/MelodyMachine/Deepfake-audio-detection-V2
-AUDIO_MODEL_ID = "MelodyMachine/Deepfake-audio-detection-V2"
-# Used only if the primary model fails to download/load (the model the
-# primary was fine-tuned from).
-AUDIO_MODEL_FALLBACK_ID = "mo-thecreator/Deepfake-audio-detection"
+AUDIO_MODEL_FALLBACK_ID = "MelodyMachine/Deepfake-audio-detection-V2"
+
+# Probability calibration for the audio classifier. Small fine-tuned speech
+# deepfake models are often badly over-confident on real-world audio (they pin
+# the score near 0 or 100). This applies temperature softening in logit space:
+#   1.0  = no change
+#   >1.0 = pull confident scores back toward 50% (softer, less saturated)
+# Raising this makes a "100% fake" reading on genuine audio less extreme.
+AUDIO_CALIBRATION_TEMPERATURE = 1.6
 
 # --- Pipeline parameters -----------------------------------------------------
 NUM_FRAMES = 24                 # evenly spaced frames sampled from the video

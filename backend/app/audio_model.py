@@ -9,6 +9,7 @@ rather than fed to a speech model that would produce meaningless output.
 from __future__ import annotations
 
 import logging
+import math
 from pathlib import Path
 from typing import Optional
 
@@ -19,6 +20,22 @@ from . import config, explainability, model_runtime
 from .schemas import ModalityResult
 
 logger = logging.getLogger("video_ai.audio")
+
+
+def _calibrate(prob: Optional[float]) -> Optional[float]:
+    """
+    Soften an over-confident probability via temperature scaling in logit space
+    (see config.AUDIO_CALIBRATION_TEMPERATURE). Small fine-tuned audio deepfake
+    models tend to pin scores near 0 or 100 on ordinary real-world audio; a
+    temperature > 1 pulls those extremes back toward 50% so a genuine clip is
+    less likely to read as a confident "100% AI". Temperature 1.0 is a no-op.
+    """
+    temperature = getattr(config, "AUDIO_CALIBRATION_TEMPERATURE", 1.0)
+    if prob is None or temperature == 1.0:
+        return prob
+    p = min(max(prob, 1e-6), 1.0 - 1e-6)
+    logit = math.log(p / (1.0 - p))
+    return 1.0 / (1.0 + math.exp(-logit / temperature))
 
 
 def _normalize_label(label: str) -> str:
@@ -81,7 +98,7 @@ def score_audio(audio_path: Optional[Path]) -> ModalityResult:
 
     def score_chunk(chunk: np.ndarray, sr: int) -> Optional[float]:
         try:
-            return fake_probability(loaded.pipe({"raw": chunk, "sampling_rate": sr}, top_k=None))
+            return _calibrate(fake_probability(loaded.pipe({"raw": chunk, "sampling_rate": sr}, top_k=None)))
         except Exception as exc:  # noqa: BLE001
             logger.warning("Audio classifier failed on a chunk: %s", exc)
             return None
@@ -92,7 +109,8 @@ def score_audio(audio_path: Optional[Path]) -> ModalityResult:
         logger.warning("Audio classifier failed on the full clip: %s", exc)
         raw_output = None
 
-    prob = fake_probability(raw_output) if raw_output is not None else None
+    raw_prob = fake_probability(raw_output) if raw_output is not None else None
+    prob = _calibrate(raw_prob)
     if prob is None:
         return ModalityResult(
             status="not_assessed",
@@ -107,9 +125,15 @@ def score_audio(audio_path: Optional[Path]) -> ModalityResult:
         timeline = explainability.build_audio_timeline(samples, sample_rate, score_chunk)
 
     detail = f"Scored {samples.size / sample_rate:.1f}s of audio at {sample_rate} Hz (RMS={rms:.4f})."
-    if prob >= 0.97 or prob <= 0.03:
+    temperature = getattr(config, "AUDIO_CALIBRATION_TEMPERATURE", 1.0)
+    if raw_prob is not None and temperature != 1.0:
         detail += (
-            " Note: this score is near the extreme of the scale — small fine-tuned audio "
+            f" Calibrated from a raw model probability of {raw_prob * 100:.1f}% "
+            f"(temperature {temperature:g}) to reduce over-confidence."
+        )
+    if raw_prob is not None and (raw_prob >= 0.97 or raw_prob <= 0.03):
+        detail += (
+            " Note: the model's raw score is near the extreme of the scale — small fine-tuned audio "
             "classifiers can be poorly calibrated on compressed/resampled real-world audio "
             "that differs from their training distribution, so a near-0 or near-100 reading "
             "deserves extra skepticism (see raw_model_output for the model's own labels/scores)."

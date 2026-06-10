@@ -51,7 +51,7 @@ inference only.
 | Track  | Primary model | Fallback model |
 |--------|---------------|----------------|
 | Visual (deepfake / synthetic image) | [`prithivMLmods/Deep-Fake-Detector-v2-Model`](https://huggingface.co/prithivMLmods/Deep-Fake-Detector-v2-Model) — ViT (`google/vit-base-patch16-224-in21k`) fine-tuned for binary Real/Fake image classification | [`prithivMLmods/deepfake-detector-model-v1`](https://huggingface.co/prithivMLmods/deepfake-detector-model-v1) |
-| Audio (synthetic / spoofed speech) | [`MelodyMachine/Deepfake-audio-detection-V2`](https://huggingface.co/MelodyMachine/Deepfake-audio-detection-V2) — Wav2Vec2-based binary Real/Fake speech classifier | [`mo-thecreator/Deepfake-audio-detection`](https://huggingface.co/mo-thecreator/Deepfake-audio-detection) (the model the primary was fine-tuned from) |
+| Audio (synthetic / spoofed speech) | [`mo-thecreator/Deepfake-audio-detection`](https://huggingface.co/mo-thecreator/Deepfake-audio-detection) — Wav2Vec2-based binary Real/Fake speech classifier (the better-calibrated base model) | [`MelodyMachine/Deepfake-audio-detection-V2`](https://huggingface.co/MelodyMachine/Deepfake-audio-detection-V2) (a narrow fine-tune of the base; more prone to over-confident "fake" readings) |
 | Face localization | [`facenet-pytorch`](https://github.com/timesler/facenet-pytorch) MTCNN (not a deepfake classifier — just crops faces for the visual model) | — |
 
 If the primary model ID fails to download or load (e.g. it gets pulled,
@@ -341,13 +341,22 @@ keywords and producing a near-100% reading regardless of what the model
 actually predicted (the same fix was mirrored into `visual_model.py` for
 consistency).
 
-Beyond label-matching bugs, a persistently saturated reading can also be a
+Beyond label-matching bugs, a persistently saturated reading is usually a
 genuine **calibration problem**: small fine-tuned speech-deepfake classifiers
 are trained on narrow datasets (often studio-quality TTS/voice-clone samples
 vs. genuine recordings) and can generalize poorly to compressed, resampled,
 background-noisy real-world video audio — confidently mislabeling ordinary
-speech as "spoof". To make this diagnosable without needing to read server
-logs:
+speech as "spoof". Two things mitigate this:
+- The **default audio model is now the better-calibrated base model**
+  (`mo-thecreator/Deepfake-audio-detection`) rather than the narrowly
+  fine-tuned `…-V2`, which tends to be the over-confident one (swap them back
+  via `AUDIO_MODEL_ID` in `config.py` if you prefer).
+- A **temperature calibration** (`AUDIO_CALIBRATION_TEMPERATURE`, default
+  `1.6`) softens over-confident probabilities in logit space, pulling extreme
+  near-0 / near-100 readings back toward the middle. Set it to `1.0` to
+  disable, or raise it to soften more aggressively.
+
+To make all this diagnosable without needing to read server logs:
 - `audio.raw_model_output` now exposes the exact `{label, score}` pairs the
   model returned for the clip (also rendered in the UI's "Where in the clip?"
   panel), so you can see precisely how the 0–100 number was derived; and
