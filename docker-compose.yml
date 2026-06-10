@@ -7,6 +7,12 @@ services:
     environment:
       # Same-origin frontend; set to your real origins for cross-origin API use.
       VIDEO_AI_CORS_ALLOW_ORIGINS: "http://localhost:8000,http://127.0.0.1:8000"
+      # --- Hugging Face model download reliability (first run) ---------------
+      # The Xet CDN (cas-bridge.xethub.hf.co) can time out on large files; route
+      # around it via the standard CDN and give each request a longer timeout.
+      HF_HUB_DISABLE_XET: "1"
+      HF_HUB_ENABLE_HF_TRANSFER: "0"
+      HF_HUB_DOWNLOAD_TIMEOUT: "60"
       # Uncomment to tune behaviour without rebuilding:
       # VIDEO_AI_NUM_FRAMES: "24"
       # VIDEO_AI_MAX_FILE_SIZE_MB: "100"
