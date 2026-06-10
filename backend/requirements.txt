@@ -22,3 +22,6 @@ facenet-pytorch==2.6.0
 pillow==10.2.0
 numpy==1.26.4
 soundfile==0.12.1
+
+# --- Voice Activity Detection (score only speech, skip silence/music/noise) -
+silero-vad==5.1.2

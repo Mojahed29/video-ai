@@ -72,7 +72,22 @@ load directly through `transformers.pipeline` — no training required.
 | Track | Primary model | Fallback model |
 |-------|---------------|----------------|
 | **Visual** (deepfake / synthetic image) | [`prithivMLmods/Deep-Fake-Detector-v2-Model`](https://huggingface.co/prithivMLmods/Deep-Fake-Detector-v2-Model) — ViT fine-tuned for binary Real/Fake image classification | [`prithivMLmods/deepfake-detector-model-v1`](https://huggingface.co/prithivMLmods/deepfake-detector-model-v1) |
-| **Audio** (synthetic / spoofed speech) | [`mo-thecreator/Deepfake-audio-detection`](https://huggingface.co/mo-thecreator/Deepfake-audio-detection) — Wav2Vec2-based binary Real/Fake speech classifier (better calibrated than the V2 fine-tune) | [`MelodyMachine/Deepfake-audio-detection-V2`](https://huggingface.co/MelodyMachine/Deepfake-audio-detection-V2) |
+| **Audio** (synthetic / spoofed speech) | [`Gustking/wav2vec2-large-xlsr-deepfake-audio-classification`](https://huggingface.co/Gustking/wav2vec2-large-xlsr-deepfake-audio-classification) — **multilingual** wav2vec2-**XLS-R-53** real/fake speech classifier (handles non-English speech, incl. Arabic) | [`MelodyMachine/Deepfake-audio-detection-V2`](https://huggingface.co/MelodyMachine/Deepfake-audio-detection-V2) (English-only, load-failure fallback) |
+
+> **Why XLS-R?** The earlier English-only fine-tunes (`mo-thecreator`,
+> `MelodyMachine`) collapse to **"100% fake" on out-of-distribution speech** —
+> Arabic especially — labelling *every* clip fake. The XLS-R-53 backbone was
+> pre-trained on ~53 languages, so it generalizes. Measured on identical clips
+> (`scripts/selftest_audio.py`):
+>
+> | clip (raw model P(fake)) | old English model | **XLS-R (current)** |
+> |------|------------------|---------------------|
+> | genuine **Arabic** human speech | 100% fake ❌ | **~22% fake** ✅ |
+> | AI/TTS Arabic | 100% fake | **~92% fake** ✅ |
+> | AI/TTS English | 100% fake | **~92% fake** ✅ |
+>
+> Note: XLS-R-large is ~1.2 GB and needs ~2–3 GB RAM to run, so the first audio
+> analysis downloads more and is slower than the old base model.
 | **Face localization** | [`facenet-pytorch`](https://github.com/timesler/facenet-pytorch) MTCNN — *not* a deepfake classifier, only crops faces for the visual model | — |
 
 If a primary model ID fails to download or load (pulled, renamed, unreachable),
@@ -150,13 +165,14 @@ prefix.
 | Variable | Default | Purpose |
 |----------|---------|---------|
 | `VIDEO_AI_VISUAL_MODEL_ID` | `prithivMLmods/Deep-Fake-Detector-v2-Model` | Visual classifier |
-| `VIDEO_AI_AUDIO_MODEL_ID` | `MelodyMachine/Deepfake-audio-detection-V2` | Audio classifier |
+| `VIDEO_AI_AUDIO_MODEL_ID` | `Gustking/wav2vec2-large-xlsr-deepfake-audio-classification` | Multilingual audio classifier |
 | `VIDEO_AI_*_FALLBACK_ID` | (documented alternates) | Used only on load failure |
 | `VIDEO_AI_NUM_FRAMES` | `24` | Frames sampled per video |
 | `VIDEO_AI_MAX_FILE_SIZE_MB` | `100` | Upload size limit |
 | `VIDEO_AI_MAX_DURATION_SECONDS` | `60` | Duration limit |
 | `VIDEO_AI_VISUAL_WEIGHT` / `_AUDIO_WEIGHT` | `0.6` / `0.4` | Fusion weights (normalized) |
-| `VIDEO_AI_AUDIO_CALIBRATION_TEMPERATURE` | `1.5` | Soften over-confident audio scores (1.0 = off) |
+| `VIDEO_AI_AUDIO_CALIBRATION_TEMPERATURE` | `1.2` | Soften over-confident audio scores (1.0 = off) |
+| `VIDEO_AI_USE_VAD` | `true` | Score only detected speech (Silero VAD); skip silence/music/noise |
 | `VIDEO_AI_CALIBRATION_ENABLED` | `false` | Uncertainty-aware calibration (see below) |
 | `VIDEO_AI_FORCE_CPU` | `false` | Ignore an available GPU |
 | `VIDEO_AI_CORS_ALLOW_ORIGINS` | `localhost:8000, 127.0.0.1:8000` | Comma-separated origins (replaces `*`) |
@@ -178,7 +194,7 @@ device:
 {
   "status": "ok",
   "visual_model": "prithivMLmods/Deep-Fake-Detector-v2-Model",
-  "audio_model": "MelodyMachine/Deepfake-audio-detection-V2",
+  "audio_model": "Gustking/wav2vec2-large-xlsr-deepfake-audio-classification",
   "device": "cpu"
 }
 ```
@@ -189,9 +205,9 @@ Multipart form upload, field name `file`. Returns an `AnalyzeResponse`:
 
 ```json
 {
-  "overall_score": 65.9,
+  "overall_score": 52.8,
   "visual_subscore": 70.8,
-  "audio_subscore": 58.5,
+  "audio_subscore": 25.7,
   "visual": {
     "status": "assessed",
     "score": 70.8,
@@ -202,10 +218,11 @@ Multipart form upload, field name `file`. Returns an `AnalyzeResponse`:
   },
   "audio": {
     "status": "assessed",
-    "score": 58.5,
-    "model_used": "MelodyMachine/Deepfake-audio-detection-V2",
-    "detail": "Scored 8.0s of audio at 16000 Hz (RMS=0.0421).",
-    "timeline": [{ "t_start": 0.0, "t_end": 2.0, "score": 32.0, "note": null }]
+    "score": 25.7,
+    "raw_score": 21.9,
+    "model_used": "Gustking/wav2vec2-large-xlsr-deepfake-audio-classification",
+    "detail": "Scored 5.7s of detected speech (VAD) at 16000 Hz (RMS=0.0474).",
+    "timeline": [{ "t_start": 0.0, "t_end": 2.0, "score": 24.0, "note": null }]
   },
   "confidence_band": "high",
   "fusion_method": "Weighted average: 60% visual + 40% audio",
@@ -301,35 +318,44 @@ fabricated calibration curve (that needs a labelled validation set we don't
 have). Instead, `VIDEO_AI_CALIBRATION_ENABLED=true` enables *uncertainty-aware
 shrinkage*: scores derived from little signal (few scored frames, very short
 audio) are pulled toward the neutral 50 prior, so a "90% fake" from a single
-frame is reported less confidently than the same number from many frames. When
-it changes a score, the API exposes the pre-calibration value as `raw_score` and
-the UI shows "raw → calibrated". With calibration off, the raw model numbers are
-reported exactly. **No accuracy claim is implied in either mode.**
+frame is reported less confidently than the same number from many frames. The
+audio track **always** exposes its raw model probability as `raw_score` beside
+the temperature-softened `score` (in the API and UI), so the underlying signal
+is never hidden. **No accuracy claim is implied by any of these transforms.**
 
 ---
 
-## Troubleshooting: audio always reads ~100% AI
+## Audio: multilingual model, VAD, and the self-test
 
-Small Wav2Vec2 deepfake-audio detectors are notoriously **over-confident** on
-ordinary recorded/compressed audio and can pin the audio sub-score near 100 on
-genuine clips (which then drags the fused score up). This is a model-quality
-limitation, not a bug in the scoring. Mitigations, in order of impact:
+**The "always 100% fake" problem.** English-only audio fine-tunes mislabel
+out-of-distribution speech — Arabic in particular — as confidently fake. The
+default audio model is now the **multilingual XLS-R-53** detector (see
+[Models](#models-used) for the before/after numbers).
 
-1. **Use the better-calibrated base model** (now the default):
-   `VIDEO_AI_AUDIO_MODEL_ID=mo-thecreator/Deepfake-audio-detection`. The V2
-   fine-tune is more saturated; it remains available as the fallback.
-2. **Raise the softening temperature**, e.g. `VIDEO_AI_AUDIO_CALIBRATION_TEMPERATURE=2.5`.
-   Temperature tempers borderline scores but, by design, only nudges extreme
-   ones (a raw 0.999 is a very large logit) — so it complements, not replaces, a
-   better model.
-3. **Lean on the visual track / lower the audio weight**, e.g.
-   `VIDEO_AI_VISUAL_WEIGHT=0.75` and `VIDEO_AI_AUDIO_WEIGHT=0.25`.
-4. **Swap in any other** `audio-classification` real/fake model via
-   `VIDEO_AI_AUDIO_MODEL_ID` — label matching is tolerant of naming variants.
+**Voice Activity Detection.** Silero VAD (`VIDEO_AI_USE_VAD=true`) isolates
+detected speech so silence, music, or noise isn't fed to the speech classifier;
+a clip with no detected speech is reported `not_assessed`. If `silero-vad` can't
+load, the pipeline falls back to the cheap RMS silence check.
 
-The result now also shows the **raw vs. softened** audio score and flags when the
-model's raw reading is near an extreme, so a saturated value is visible rather
-than hidden.
+**Raw beside calibrated.** The audio result always exposes both the **raw model
+probability** (`raw_score`) and the temperature-softened `score`, in the API and
+the UI, and flags when the raw reading is near an extreme.
+
+**Self-test (pass/fail gate).** [`backend/scripts/selftest_audio.py`](backend/scripts/selftest_audio.py)
+scores genuine human speech (including Arabic) and AI/TTS clips through the real
+pipeline and asserts genuine speech does **not** read as confidently fake:
+
+```bash
+cd backend
+python scripts/selftest_audio.py --make-clips     # macOS: generates TTS + fetches a real Arabic clip
+python scripts/selftest_audio.py --clips-dir /path/to/your/clips   # or bring your own
+```
+
+Name clips `genuine_*` (real) and `ai_*` (synthetic). Observed with the current
+model (VAD on, temp 1.2): genuine Arabic **21.9% raw → 25.7% calibrated**,
+AI Arabic **91.5 → 87.9**, AI English **91.8 → 88.2** — gate passed. If a model you swap in still saturates,
+raise `VIDEO_AI_AUDIO_CALIBRATION_TEMPERATURE`, lower `VIDEO_AI_AUDIO_WEIGHT`, or
+try the next leaderboard model.
 
 ---
 
@@ -339,7 +365,8 @@ than hidden.
 |------|----------|
 | No face detected in any frame | Falls back to scoring full frames; `visual.detail` says so |
 | No audio track | `audio.status = "not_assessed"`, reason explains it |
-| Silent / near-silent / music-only audio (cheap RMS check) | `not_assessed`; the model is skipped |
+| Silent / near-silent audio (cheap RMS check) | `not_assessed`; the model is skipped |
+| No speech detected (Silero VAD finds only music/noise/silence) | `not_assessed`; only detected speech is ever scored |
 | Corrupt / unreadable file | `422` with a clear ffprobe-derived message; never crashes |
 | Very short video (< 2 s) | Still analyzed; a warning is added |
 | Oversized (> 100 MB) or too long (> 60 s) | `413`, rejected before any model runs |

@@ -98,6 +98,21 @@ def get_face_detector() -> Optional[Any]:
         return None
 
 
+@lru_cache(maxsize=1)
+def get_vad() -> Optional[Any]:
+    """Silero VAD model for isolating speech. Returns ``None`` if unavailable
+    (callers then fall back to the cheap RMS silence check)."""
+    if not settings.use_vad:
+        return None
+    try:
+        from silero_vad import load_silero_vad
+
+        return load_silero_vad()
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Silero VAD unavailable (%s); falling back to RMS gating.", exc)
+        return None
+
+
 def warm_up() -> dict[str, str]:
     """Force-load every model once (startup / health check) and report what loaded."""
     info: dict[str, str] = {"device": get_device()}

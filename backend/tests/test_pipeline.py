@@ -30,6 +30,14 @@ def _fake_loaded(output, model_id="test/model"):
     return LoadedPipeline(pipe=FakePipe(output), model_id=model_id)
 
 
+@pytest.fixture(autouse=True)
+def _bypass_vad(monkeypatch):
+    """Make audio tests deterministic regardless of whether Silero VAD is
+    installed: force the "VAD unavailable -> score full audio" path. Tests that
+    exercise the no-speech branch patch ``_extract_speech`` directly instead."""
+    monkeypatch.setattr(model_runtime, "get_vad", lambda: None)
+
+
 # --------------------------------------------------------------------------- #
 # Audio edge cases
 # --------------------------------------------------------------------------- #
@@ -86,6 +94,15 @@ def test_audio_assessed_produces_score_and_timeline(monkeypatch):
     assert all(0 <= p.score <= 100 for p in result.timeline)
 
 
+def test_audio_no_speech_detected_is_not_assessed(monkeypatch):
+    # VAD finds no speech -> not_assessed (don't feed silence/music to the model).
+    monkeypatch.setattr(audio_model.sf, "read", lambda *a, **k: (np.full(16000 * 4, 0.2, dtype="float32"), 16000))
+    monkeypatch.setattr(audio_model, "_extract_speech", lambda s, sr: (None, True))
+    result = audio_model.score_audio("dummy.wav")
+    assert result.status == "not_assessed"
+    assert "no speech" in result.reason.lower()
+
+
 def test_audio_temperature_softens_overconfident_score(monkeypatch):
     # A model that screams "100% fake" should be tempered below 100 when
     # temperature > 1 (the "always 100" mitigation).
@@ -99,8 +116,7 @@ def test_audio_temperature_softens_overconfident_score(monkeypatch):
     result = audio_model.score_audio("dummy.wav")
     assert result.status == "assessed"
     assert result.score < 99.0  # softened
-    assert result.raw_score == pytest.approx(99.0)  # original model score preserved
-    assert "Softened" in (result.detail or "")
+    assert result.raw_score == pytest.approx(99.0)  # raw model score always exposed
 
 
 # --------------------------------------------------------------------------- #

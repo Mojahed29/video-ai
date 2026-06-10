@@ -37,7 +37,8 @@ class ModalityResult(BaseModel):
     )
     raw_score: Optional[float] = Field(
         default=None,
-        description="Pre-calibration score; set only when calibration changed it.",
+        description="Raw model probability (0–100) before temperature/calibration. "
+        "Always present for the audio track so the raw signal sits beside the calibrated one.",
     )
     reason: Optional[str] = Field(
         default=None, description="Why the track was not assessed (status == not_assessed)."

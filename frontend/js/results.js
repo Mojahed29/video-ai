@@ -81,7 +81,9 @@ function subscore(label, icon, m) {
   const detail = assessed ? m.detail : m.reason;
   const rawNote =
     assessed && m.raw_score != null
-      ? `<p class="subscore-detail">Raw model score ${m.raw_score} → calibrated ${m.score}.</p>`
+      ? `<p class="subscore-detail">Raw model probability <strong>${m.raw_score}%</strong>${
+          m.raw_score !== m.score ? ` → calibrated <strong>${m.score}%</strong>` : ""
+        }.</p>`
       : "";
   const model = m.model_used ? `<p class="subscore-model">Model: ${escapeHtml(m.model_used)}</p>` : "";
   return `

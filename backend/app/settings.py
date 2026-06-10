@@ -37,15 +37,17 @@ class Settings(BaseSettings):
     visual_model_fallback_id: str = "prithivMLmods/deepfake-detector-model-v1"
 
     # --- Audio (synthetic speech) classifier --------------------------------
-    # Wav2Vec2-based binary real-vs-fake speech classifier.
-    #
-    # Default to the BASE model rather than the narrowly fine-tuned V2: the V2
-    # fine-tune tends to be over-confident on ordinary compressed/resampled
-    # video audio and reports "fake" at ~100% on genuine clips. The base model
-    # is generally better calibrated. Swap them back via env if you prefer V2.
-    # https://huggingface.co/mo-thecreator/Deepfake-audio-detection
-    audio_model_id: str = "mo-thecreator/Deepfake-audio-detection"
-    # https://huggingface.co/MelodyMachine/Deepfake-audio-detection-V2
+    # MULTILINGUAL deepfake-speech classifier built on wav2vec2-XLS-R-53
+    # (pre-trained on ~53 languages, incl. Arabic). The previous English-only
+    # fine-tunes (mo-thecreator / MelodyMachine) collapse to "100% fake" on
+    # out-of-distribution speech — Arabic especially. In our self-test this
+    # model scores genuine Arabic at ~15% fake vs ~91% for TTS (see
+    # scripts/selftest_audio.py), where the old models gave 100% for both.
+    # Wav2Vec2ForSequenceClassification, so it loads via the same pipeline.
+    # https://huggingface.co/Gustking/wav2vec2-large-xlsr-deepfake-audio-classification
+    audio_model_id: str = "Gustking/wav2vec2-large-xlsr-deepfake-audio-classification"
+    # Last-resort fallback if the primary fails to LOAD (not quality-equivalent;
+    # it is English-only). https://huggingface.co/MelodyMachine/Deepfake-audio-detection-V2
     audio_model_fallback_id: str = "MelodyMachine/Deepfake-audio-detection-V2"
 
     # --- Pipeline parameters ------------------------------------------------
@@ -56,6 +58,12 @@ class Settings(BaseSettings):
     audio_sample_rate: int = 16_000  # required input rate for wav2vec2-family models
     silence_rms_threshold: float = 0.003  # below this average RMS, audio is treated as silent
 
+    # Voice Activity Detection (Silero). When enabled, only detected speech is
+    # scored — silence / music / noise is skipped instead of being fed to the
+    # speech classifier. Falls back to the RMS check if the model can't load.
+    use_vad: bool = True
+    vad_min_speech_seconds: float = 0.8  # below this much detected speech -> not assessed
+
     # Audio explainability timeline: the clip is split into at most this many
     # windows (each at least ``audio_timeline_min_window_s`` long) and each
     # window is scored so the UI can plot how the synthetic-speech likelihood
@@ -64,12 +72,13 @@ class Settings(BaseSettings):
     audio_timeline_windows: int = 6
     audio_timeline_min_window_s: float = 2.0
 
-    # Temperature softening of the audio probability (logit-space). Small audio
-    # deepfake detectors are over-confident on real-world clips; a value > 1
-    # tempers borderline readings toward 50%. 1.0 = no change. This applies to
-    # both the overall audio score and each timeline window. (Visual scores are
-    # not softened by default; raise the visual value only if needed.)
-    audio_calibration_temperature: float = 1.5
+    # Temperature softening of the audio probability (logit-space). A value > 1
+    # tempers over-confident readings toward 50%. 1.0 = no change. The XLS-R
+    # model now separates real vs. fake well, so only MILD softening is applied
+    # (heavy softening would muddy a good signal); raise it if a model you swap
+    # in is over-confident. Applies to the overall score and each timeline
+    # window. (Visual is not softened by default.)
+    audio_calibration_temperature: float = 1.2
     visual_calibration_temperature: float = 1.0
 
     # --- Fusion -------------------------------------------------------------

@@ -50,13 +50,21 @@ def score_audio(audio_path: Optional[Path]) -> ModalityResult:
             reason="Audio track is silent (or near-silent); no speech to assess.",
         )
 
+    # Isolate speech with VAD so silence/music/noise isn't scored as "speech".
+    scored, used_vad = _extract_speech(samples, sample_rate)
+    if scored is None:
+        return ModalityResult(
+            status="not_assessed",
+            reason="No speech detected in the audio (only silence, music, or noise).",
+        )
+
     try:
         loaded = model_runtime.get_audio_pipeline()
     except Exception as exc:  # noqa: BLE001
         logger.error("Audio model failed to load: %s", exc)
         return ModalityResult(status="not_assessed", reason=f"Audio model failed to load: {exc}")
 
-    raw_prob = _classify(loaded.pipe, samples, sample_rate)
+    raw_prob = _classify(loaded.pipe, scored, sample_rate)
     if raw_prob is None:
         return ModalityResult(
             status="not_assessed",
@@ -64,32 +72,60 @@ def score_audio(audio_path: Optional[Path]) -> ModalityResult:
             model_used=loaded.model_id,
         )
 
-    total_seconds = samples.size / sample_rate
+    total_seconds = scored.size / sample_rate
     temperature = settings.audio_calibration_temperature
     soft_prob = calibration.temperature_scale(raw_prob, temperature)
 
     raw = round(raw_prob * 100, 1)
     score = calibration.calibrate_audio(round(soft_prob * 100, 1), audio_seconds=total_seconds, settings=settings)
-    timeline = _build_timeline(loaded.pipe, samples, sample_rate, soft_prob, temperature)
+    timeline = _build_timeline(loaded.pipe, scored, sample_rate, soft_prob, temperature)
 
-    detail = f"Scored {total_seconds:.1f}s of audio at {sample_rate} Hz (RMS={rms:.4f})."
-    if temperature != 1.0 and score != raw:
-        detail += f" Softened from a raw model score of {raw} (temperature {temperature:g})."
+    source = "detected speech (VAD)" if used_vad else "audio"
+    detail = f"Scored {total_seconds:.1f}s of {source} at {sample_rate} Hz (RMS={rms:.4f})."
     if raw_prob >= 0.97 or raw_prob <= 0.03:
         detail += (
-            " Heads-up: the model's raw score is near the extreme of the scale. Small audio "
-            "deepfake detectors are often poorly calibrated on real-world recordings, so treat a "
-            "near-0 or near-100 audio reading with extra skepticism."
+            " Heads-up: the model's raw score is near the extreme of the scale. Audio deepfake "
+            "detectors can be poorly calibrated on out-of-distribution speech, so treat a near-0 "
+            "or near-100 audio reading with extra skepticism."
         )
 
     return ModalityResult(
         status="assessed",
         score=score,
-        raw_score=raw if score != raw else None,
+        raw_score=raw,  # always exposed alongside the calibrated score
         model_used=loaded.model_id,
         detail=detail,
         timeline=timeline,
     )
+
+
+def _extract_speech(samples: np.ndarray, sample_rate: int) -> tuple[Optional[np.ndarray], bool]:
+    """
+    Return ``(speech_samples, used_vad)``.
+
+    With Silero VAD available, concatenate only the detected speech regions; if
+    too little speech is found, return ``(None, True)`` so the caller reports
+    "no speech". If VAD is unavailable, return the original samples untouched.
+    """
+    vad = model_runtime.get_vad()
+    if vad is None:
+        return samples, False
+    try:
+        import torch
+        from silero_vad import get_speech_timestamps
+
+        wav = torch.from_numpy(np.ascontiguousarray(samples, dtype=np.float32))
+        spans = get_speech_timestamps(wav, vad, sampling_rate=sample_rate)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("VAD failed (%s); scoring the full audio instead.", exc)
+        return samples, False
+
+    if not spans:
+        return None, True
+    speech = np.concatenate([samples[s["start"]:s["end"]] for s in spans])
+    if speech.size / sample_rate < settings.vad_min_speech_seconds:
+        return None, True
+    return speech, True
 
 
 def _classify(pipe, samples: np.ndarray, sample_rate: int) -> Optional[float]:
