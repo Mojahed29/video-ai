@@ -13,9 +13,9 @@ real/fake classifier exposed through the ``transformers`` pipeline API works
 """
 from __future__ import annotations
 
+import json
 from functools import lru_cache
 
-from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -81,18 +81,26 @@ class Settings(BaseSettings):
     # --- API ----------------------------------------------------------------
     # Replaces the previous allow_origins=["*"]. The frontend is served from the
     # same origin, so the defaults only matter for cross-origin API consumers.
-    cors_allow_origins: list[str] = ["http://localhost:8000", "http://127.0.0.1:8000"]
+    #
+    # Stored as a plain string (comma-separated, or a JSON list) and parsed by
+    # `cors_origins` below. Keeping it a `str` — rather than a `list[str]` —
+    # avoids pydantic-settings' automatic JSON-decoding of "complex" fields,
+    # which would otherwise reject a normal "a,b,c" env value before any
+    # validator runs.
+    cors_allow_origins: str = "http://localhost:8000,http://127.0.0.1:8000"
 
-    @field_validator("cors_allow_origins", mode="before")
-    @classmethod
-    def _split_csv(cls, value: object) -> object:
-        """Allow ``A,B,C`` (env-friendly) in addition to a JSON list."""
-        if isinstance(value, str):
-            stripped = value.strip()
-            if stripped.startswith("["):  # let pydantic parse JSON lists
-                return value
-            return [item.strip() for item in stripped.split(",") if item.strip()]
-        return value
+    @property
+    def cors_origins(self) -> list[str]:
+        """The allowed origins as a list (accepts comma-separated or a JSON list)."""
+        raw = self.cors_allow_origins.strip()
+        if not raw:
+            return []
+        if raw.startswith("["):
+            try:
+                return list(json.loads(raw))
+            except json.JSONDecodeError:
+                pass
+        return [origin.strip() for origin in raw.split(",") if origin.strip()]
 
     @property
     def max_file_size_bytes(self) -> int:
