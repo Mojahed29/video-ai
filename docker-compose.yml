@@ -1,0 +1,22 @@
+services:
+  video-ai:
+    build: .
+    image: video-ai-detector:latest
+    ports:
+      - "8000:8000"
+    environment:
+      # Same-origin frontend; set to your real origins for cross-origin API use.
+      VIDEO_AI_CORS_ALLOW_ORIGINS: "http://localhost:8000,http://127.0.0.1:8000"
+      # Uncomment to tune behaviour without rebuilding:
+      # VIDEO_AI_NUM_FRAMES: "24"
+      # VIDEO_AI_MAX_FILE_SIZE_MB: "100"
+      # VIDEO_AI_CALIBRATION_ENABLED: "false"
+    # Optionally load a local .env (copy from backend/.env.example):
+    # env_file: [backend/.env]
+    volumes:
+      # Persist downloaded Hugging Face models across container restarts.
+      - hf-models:/models
+    restart: unless-stopped
+
+volumes:
+  hf-models:

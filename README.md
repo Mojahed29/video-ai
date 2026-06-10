@@ -1,161 +1,177 @@
 # Video AI Detector
 
-A small full-stack app that estimates how likely an uploaded video is
-**AI-generated or face-swapped**, by scoring its visual track and audio track
-**separately** with pretrained open models, then fusing both probabilities
-into a single 0–100 score.
+Estimate how likely an uploaded video is **AI-generated or face-swapped** by
+scoring its **visual** and **audio** tracks *separately* with pretrained open
+models, then fusing both probabilities into a single 0–100 score — with the
+supporting evidence shown over time.
 
-> ⚠️ **This is a heuristic signal, not a verdict.** See [Disclaimer](#disclaimer).
+> ⚠️ **This is an estimate, not proof.** It is a heuristic signal, not a verdict.
+> See [Honest limitations](#honest-limitations).
+
+FastAPI backend (inference only — no training) + a framework-light, fully
+responsive, accessible frontend themed with the **Telecommunications Regulatory
+Authority (TRA) of Oman** brand palette.
 
 ---
 
-## How it works
+## Table of contents
+
+- [What it does](#what-it-does)
+- [Models used](#models-used)
+- [Quick start (Docker)](#quick-start-docker)
+- [Local development](#local-development)
+- [Configuration](#configuration)
+- [API reference](#api-reference)
+- [The interface](#the-interface)
+- [Design notes & color tokens](#design-notes--color-tokens)
+- [Explainability & calibration](#explainability--calibration)
+- [Edge cases handled](#edge-cases-handled)
+- [Tests](#tests)
+- [Project structure](#project-structure)
+- [Honest limitations](#honest-limitations)
+
+---
+
+## What it does
 
 ```
-upload (mp4/mov/webm/mkv, ≤100MB, ≤60s)
+upload (mp4/mov/webm/mkv, ≤100 MB, ≤60 s)
    │
    ├─ ffprobe: duration, has-audio?, corrupt-file check
    │
    ├─ ffmpeg → N evenly spaced JPEG frames (default 24)
    │     └─ MTCNN face detection per frame
-   │           ├─ face(s) found → crop & run visual classifier on each face
-   │           └─ no face       → run visual classifier on the full frame
-   │     └─ VISUAL sub-score = mean P(fake) over scored frames   →  0–100
+   │           ├─ face(s) found → crop & run the visual classifier on each face
+   │           └─ no face       → run the visual classifier on the full frame
+   │     └─ VISUAL sub-score = mean P(fake) over scored frames        → 0–100
+   │        (+ per-frame timeline for the heat strip)
    │
-   ├─ ffmpeg → mono 16kHz WAV
-   │     └─ RMS silence check (skip model if track is silent/near-silent)
-   │     └─ AUDIO sub-score = P(synthetic speech)                →  0–100
-   │           (or "not assessed" if no audio / silent / model failure)
+   ├─ ffmpeg → mono 16 kHz WAV
+   │     └─ RMS silence check (skip the model if the track is silent)
+   │     └─ AUDIO sub-score = P(synthetic speech) over the whole clip  → 0–100
+   │        (+ per-window timeline; "not assessed" if no/silent audio)
    │
-   └─ FUSION: weighted average  (default 60% visual / 40% audio)
-         · if one modality is missing → use the other alone, and say so
-         · confidence band: high (both assessed) / medium (one) / low (neither)
+   └─ FUSION: weighted average (default 60% visual / 40% audio)
+         · one modality missing → use the other alone, and say so
+         · confidence band: high (both) / medium (one) / low (neither)
+         · optional uncertainty-aware calibration (off by default)
 ```
 
-The backend returns `overall_score`, both sub-scores, per-modality status,
-the exact model IDs used (including whether a fallback model had to be
-loaded), the number of frames analyzed, and a confidence band.
+The API returns the `overall_score`, both sub-scores, per-modality status, the
+exact model IDs used (including whether a fallback model had to be loaded), the
+number of frames analyzed, a confidence band, and per-frame / per-window
+timelines for the explainability panels.
 
 ---
 
 ## Models used
 
-Picked for being well-downloaded, maintained, binary real/fake classifiers
-that load directly through `transformers.pipeline` — no training required,
-inference only.
+Chosen for being well-downloaded, maintained, binary real/fake classifiers that
+load directly through `transformers.pipeline` — no training required.
 
-| Track  | Primary model | Fallback model |
-|--------|---------------|----------------|
-| Visual (deepfake / synthetic image) | [`prithivMLmods/Deep-Fake-Detector-v2-Model`](https://huggingface.co/prithivMLmods/Deep-Fake-Detector-v2-Model) — ViT (`google/vit-base-patch16-224-in21k`) fine-tuned for binary Real/Fake image classification | [`prithivMLmods/deepfake-detector-model-v1`](https://huggingface.co/prithivMLmods/deepfake-detector-model-v1) |
-| Audio (synthetic / spoofed speech) | [`MelodyMachine/Deepfake-audio-detection-V2`](https://huggingface.co/MelodyMachine/Deepfake-audio-detection-V2) — Wav2Vec2-based binary Real/Fake speech classifier | [`mo-thecreator/Deepfake-audio-detection`](https://huggingface.co/mo-thecreator/Deepfake-audio-detection) (the model the primary was fine-tuned from) |
-| Face localization | [`facenet-pytorch`](https://github.com/timesler/facenet-pytorch) MTCNN (not a deepfake classifier — just crops faces for the visual model) | — |
+| Track | Primary model | Fallback model |
+|-------|---------------|----------------|
+| **Visual** (deepfake / synthetic image) | [`prithivMLmods/Deep-Fake-Detector-v2-Model`](https://huggingface.co/prithivMLmods/Deep-Fake-Detector-v2-Model) — ViT fine-tuned for binary Real/Fake image classification | [`prithivMLmods/deepfake-detector-model-v1`](https://huggingface.co/prithivMLmods/deepfake-detector-model-v1) |
+| **Audio** (synthetic / spoofed speech) | [`MelodyMachine/Deepfake-audio-detection-V2`](https://huggingface.co/MelodyMachine/Deepfake-audio-detection-V2) — Wav2Vec2-based binary Real/Fake speech classifier | [`mo-thecreator/Deepfake-audio-detection`](https://huggingface.co/mo-thecreator/Deepfake-audio-detection) |
+| **Face localization** | [`facenet-pytorch`](https://github.com/timesler/facenet-pytorch) MTCNN — *not* a deepfake classifier, only crops faces for the visual model | — |
 
-If the primary model ID fails to download or load (e.g. it gets pulled,
-renamed, or is unreachable), the app **automatically falls back** to the
-documented alternative and the API/UI report **which model actually ran**
-(`visual.model_used` / `audio.model_used` and the `/api/health` endpoint).
-If both fail to load, that modality is reported as `"not_assessed"` with the
-load error — the app does not crash.
+If a primary model ID fails to download or load (pulled, renamed, unreachable),
+the app **automatically falls back** to the documented alternative and the
+API/UI report **which model actually ran** (`visual.model_used`,
+`audio.model_used`, and `/api/health`). If both fail to load, that modality is
+reported as `"not_assessed"` with the load error — the app does not crash.
 
-### Swapping in a different model
-
-Change exactly one constant in [`backend/app/config.py`](backend/app/config.py):
-
-```python
-VISUAL_MODEL_ID = "your-org/your-model"   # any binary real/fake image-classification model
-AUDIO_MODEL_ID  = "your-org/your-model"   # any binary real/fake audio-classification model
-```
-
-Labels are matched by substring (`"fake"/"real"`, `"spoof"/"bonafide"`,
-`"synthetic"/"authentic"`, …) in `visual_model._fake_probability` /
-`audio_model._fake_probability`, so most binary real-vs-fake classifiers work
-without further changes.
+**Swapping models** is a config change only (see [Configuration](#configuration)).
+Labels are matched by substring (`fake`/`real`, `spoof`/`bonafide`,
+`synthetic`/`authentic`, …) in [`backend/app/labels.py`](backend/app/labels.py),
+so most binary real-vs-fake classifiers work without code changes.
 
 ---
 
-## Project structure
+## Quick start (Docker)
 
+The image bundles **ffmpeg** and serves the backend + frontend together.
+
+```bash
+docker compose up --build
 ```
-video-ai/
-├── backend/
-│   ├── app/
-│   │   ├── main.py            FastAPI app, /api/analyze and /api/health routes
-│   │   ├── config.py          ★ all tunables — model IDs, weights, limits
-│   │   ├── pipeline.py        end-to-end orchestration + edge-case handling
-│   │   ├── video_utils.py     ffmpeg/ffprobe: probing, frame & audio extraction
-│   │   ├── visual_model.py    face detection + visual deepfake scoring
-│   │   ├── audio_model.py     silence detection + synthetic-speech scoring
-│   │   ├── fusion.py          weighted-average fusion + confidence band
-│   │   ├── model_runtime.py   lazy model loading, device selection, fallback
-│   │   └── schemas.py         pydantic response models
-│   └── requirements.txt
-├── frontend/
-│   ├── index.html             single-page UI (drag & drop, results card)
-│   ├── style.css
-│   └── app.js                 upload, progress, result rendering
-└── README.md
-```
+
+Then open **http://localhost:8000**.
+
+The first analysis downloads the pretrained models from the Hugging Face Hub
+(cached in the `hf-models` volume, so restarts are fast). This needs internet
+on first run only. The image uses the **CPU build of PyTorch** by default.
 
 ---
 
-## Setup
+## Local development
 
-### 1. Install ffmpeg (required — used for frame & audio extraction)
+### 1. Install ffmpeg (required)
 
 | OS | Command |
 |----|---------|
 | Ubuntu / Debian | `sudo apt-get update && sudo apt-get install -y ffmpeg` |
 | macOS (Homebrew) | `brew install ffmpeg` |
-| Windows | Download a build from [ffmpeg.org](https://ffmpeg.org/download.html), add the `bin/` folder to your `PATH` |
+| Windows | Download from [ffmpeg.org](https://ffmpeg.org/download.html) and add `bin/` to `PATH` |
 
-Verify with:
+Verify: `ffmpeg -version` and `ffprobe -version`.
 
-```bash
-ffmpeg -version
-ffprobe -version
-```
-
-### 2. Install Python dependencies
-
-Python 3.11 recommended. From the `backend/` directory:
+### 2. Install Python dependencies (Python 3.11 recommended)
 
 ```bash
 cd backend
 pip install -r requirements.txt
 ```
 
-This installs FastAPI, PyTorch (CPU build by default), `transformers`,
-`facenet-pytorch` (MTCNN face detector), and audio I/O libraries.
-
-> **Optional GPU acceleration:** if you have a CUDA-capable GPU, install a
-> matching CUDA build of `torch`/`torchvision`/`torchaudio` from
+> **Optional GPU acceleration:** install a CUDA build of
+> `torch`/`torchvision`/`torchaudio` from
 > [pytorch.org/get-started/locally](https://pytorch.org/get-started/locally/)
-> *before* running `pip install -r requirements.txt` (pip will then reuse
-> your GPU build). The app auto-detects CUDA via `torch.cuda.is_available()`
-> and reports the active device at `/api/health`.
+> *before* `pip install -r requirements.txt`. The app auto-detects CUDA via
+> `torch.cuda.is_available()` and reports the active device at `/api/health`.
 
 ### 3. Run
-
-From the `backend/` directory:
 
 ```bash
 uvicorn app.main:app --host 0.0.0.0 --port 8000
 ```
 
-Then open **http://localhost:8000** — the FastAPI app serves the frontend
-directly (no separate frontend build/server, no CORS issues).
-
-The first analysis request triggers a one-time download of the pretrained
-models from Hugging Face Hub (cached under `~/.cache/huggingface` afterwards).
-This requires an internet connection on first run only.
+Open **http://localhost:8000** — FastAPI serves the frontend on the same origin
+(no separate frontend server, no CORS issues).
 
 ---
 
-## API
+## Configuration
+
+All settings are environment-driven via [`backend/app/settings.py`](backend/app/settings.py)
+(pydantic-settings). Copy [`backend/.env.example`](backend/.env.example) to
+`backend/.env` and override what you need. Every variable uses the `VIDEO_AI_`
+prefix.
+
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `VIDEO_AI_VISUAL_MODEL_ID` | `prithivMLmods/Deep-Fake-Detector-v2-Model` | Visual classifier |
+| `VIDEO_AI_AUDIO_MODEL_ID` | `MelodyMachine/Deepfake-audio-detection-V2` | Audio classifier |
+| `VIDEO_AI_*_FALLBACK_ID` | (documented alternates) | Used only on load failure |
+| `VIDEO_AI_NUM_FRAMES` | `24` | Frames sampled per video |
+| `VIDEO_AI_MAX_FILE_SIZE_MB` | `100` | Upload size limit |
+| `VIDEO_AI_MAX_DURATION_SECONDS` | `60` | Duration limit |
+| `VIDEO_AI_VISUAL_WEIGHT` / `_AUDIO_WEIGHT` | `0.6` / `0.4` | Fusion weights (normalized) |
+| `VIDEO_AI_CALIBRATION_ENABLED` | `false` | Uncertainty-aware calibration (see below) |
+| `VIDEO_AI_FORCE_CPU` | `false` | Ignore an available GPU |
+| `VIDEO_AI_CORS_ALLOW_ORIGINS` | `localhost:8000, 127.0.0.1:8000` | Comma-separated origins (replaces `*`) |
+
+CORS is restricted to the configured origins and `GET`/`POST` only. Because the
+frontend is same-origin, the defaults are all you need for normal use; set real
+origins only if you expose the API to other sites.
+
+---
+
+## API reference
 
 ### `GET /api/health`
-Loads (or confirms already-loaded) models and reports which model IDs are
-actually active and which compute device is in use:
+
+Loads (or confirms) the models and reports which IDs are active and the compute
+device:
 
 ```json
 {
@@ -167,76 +183,127 @@ actually active and which compute device is in use:
 ```
 
 ### `POST /api/analyze`
-Multipart form upload, field name `file`. Returns:
+
+Multipart form upload, field name `file`. Returns an `AnalyzeResponse`:
 
 ```json
 {
-  "overall_score": 63.4,
-  "visual_subscore": 71.2,
-  "audio_subscore": 50.5,
+  "overall_score": 65.9,
+  "visual_subscore": 70.8,
+  "audio_subscore": 58.5,
   "visual": {
     "status": "assessed",
-    "score": 71.2,
+    "score": 70.8,
+    "raw_score": null,
     "model_used": "prithivMLmods/Deep-Fake-Detector-v2-Model",
-    "detail": "18/24 sampled frames had a detectable face (24 frames scored)."
+    "detail": "18/24 sampled frames had a detectable face (24 frames scored).",
+    "timeline": [{ "t_start": 1.2, "t_end": 1.2, "score": 64.0, "note": "face" }]
   },
   "audio": {
     "status": "assessed",
-    "score": 50.5,
+    "score": 58.5,
     "model_used": "MelodyMachine/Deepfake-audio-detection-V2",
-    "detail": "Scored 5.8s of audio at 16000 Hz (RMS=0.0421)."
+    "detail": "Scored 8.0s of audio at 16000 Hz (RMS=0.0421).",
+    "timeline": [{ "t_start": 0.0, "t_end": 2.0, "score": 32.0, "note": null }]
   },
   "confidence_band": "high",
   "fusion_method": "Weighted average: 60% visual + 40% audio",
+  "calibrated": false,
   "frames_analyzed": 24,
-  "duration_seconds": 5.8,
+  "duration_seconds": 8.0,
   "warnings": []
 }
 ```
 
+**Status codes:** `400` wrong file type · `413` too large / too long ·
+`422` corrupt / unreadable · `500` unexpected. Each returns `{ "detail": "…" }`.
+
+Interactive docs are available at `/docs` (Swagger) and `/redoc`.
+
 ---
 
-## Sample run (documented end-to-end check)
+## The interface
 
-A synthetic test clip was generated with ffmpeg's `testsrc`/`sine` filters
-(no faces, a pure tone — i.e. a clip that exercises the "no face detected"
-and "no speech" edge cases) and posted to a locally running instance:
+A single-page app with an explicit state machine (idle → selected → working →
+success | error). All states are designed, not afterthoughts:
 
-```bash
-ffmpeg -y -f lavfi -i "testsrc=duration=4:size=320x240:rate=10" \
-       -f lavfi -i "sine=frequency=440:duration=4" \
-       -c:v libx264 -c:a aac -shortest sample.mp4
+- **Idle** — branded dropzone with drag-and-drop, click, or keyboard selection
+  and format/limit chips.
+- **Selected** — a file card (name, size, type) with **Analyze** / **Choose a
+  different file**; obviously-invalid files are rejected client-side before the
+  ~1-minute upload.
+- **Working** — a **real** upload progress bar followed by a staged analysis
+  indicator (*Uploading → Extracting frames → Scoring visual → Scoring audio →
+  Fusing results*) with a checklist that ticks off. Re-submission is disabled
+  and a **Cancel** button aborts the request.
+- **Success** — an arc **score gauge**, a plain-language verdict, the confidence
+  band, the two sub-scores with meters and the model that produced each, and the
+  explainability panels.
+- **Errors & "not assessed"** — every error case has a tailored message; a
+  modality that can't be scored shows a clear "Not assessed" state with the
+  reason instead of a fake number.
 
-curl -s -X POST http://127.0.0.1:8000/api/analyze -F "file=@sample.mp4;type=video/mp4"
-```
+**Accessibility:** semantic landmarks, ARIA labels, a keyboard-operable
+dropzone, visible focus rings, `aria-live` result/progress regions, and respect
+for `prefers-reduced-motion` and `forced-colors`. **Responsive:** mobile-first,
+verified from 375 px phones to desktop with no horizontal scroll and ≥ 44 px tap
+targets. The "estimate, not proof" disclaimer is shown prominently at all times.
 
-Observed pipeline behavior (verified during development):
+---
 
-* `ffprobe` correctly read duration `4.0s`, `has_audio=true`.
-* `ffmpeg` extracted 23 evenly spaced frames.
-* No faces were found in the synthetic test pattern → the visual model fell
-  back to scoring full frames, and `visual.detail` reported
-  `"No face detected in any of the 24 sampled frames; scored full frames instead"`.
-* The clip's audio was a constant tone (not silence, not speech) → the audio
-  model still ran and was reported as `"assessed"` (a real speech clip would
-  exercise the same code path with a meaningful synthetic-speech score).
-* A 1-second no-audio clip produced `audio.status = "not_assessed"`,
-  `reason = "The video has no audio track."`, and a
-  `"Video is very short (1.0s); results may be based on very little signal."`
-  warning — confirming the very-short-video and no-audio edge cases are
-  handled without crashing.
-* An intentionally corrupted `.mp4` (text bytes renamed to `.mp4`) returned
-  HTTP `422` with `"Could not read video file: ... moov atom not found"`
-  rather than crashing the server.
-* `GET /api/health` returns `200` and reports the active device
-  (`cpu`/`cuda`) and the model IDs that successfully loaded (or, on load
-  failure, the fallback that was attempted and the resulting error — the
-  modality is then marked `"not_assessed"` rather than crashing).
+## Design notes & color tokens
 
-> Note: actual `visual_subscore`/`audio_subscore` numbers depend on the real
-> pretrained model weights, which are downloaded from Hugging Face Hub on
-> first run — they are not bundled with this repo (per the "no manual dataset
-> downloads, inference only" requirement).
+The theme is built on the **official TRA of Oman brand palette**, taken directly
+from the design tokens published on the TRA website (`tra.gov.om`) — a deep
+"TRA blue" with teal/cyan accents (not the green many assume from the flag).
+These are codified as CSS custom properties in
+[`frontend/css/tokens.css`](frontend/css/tokens.css).
+
+| Token | Value | Role |
+|-------|-------|------|
+| `--tra-600` / `--brand` | `#234F9C` | Primary "TRA blue" |
+| `--tra-700` … `--tra-900` | `#1d4282` `#19366b` `#142a54` | Strong / deep brand, headings |
+| `--teal` / `--cyan` | `#00ABB1` / `#33DEF2` | Accents (decorative) |
+| `--teal-text` | `#007E83` | AA-safe teal for text/icons |
+| `--bg` (+ gradient) | `#eef3fb` | Soft, layered page background |
+| `--surface` / `--surface-alt` | `#ffffff` / `#F8FCFF` | Cards |
+| `--text` / `--text-body` / `--muted` | `#16223F` / `#2C3A59` / `#586A8C` | Text ramp |
+| `--success` / `--warn` / `--danger` | `#0E7A52` / `#B45309` / `#C0362C` | Status + score scale |
+
+Every text/background pair was checked for **WCAG-AA contrast** (≥ 4.5:1 for body
+text). The design also uses a consistent spacing scale, type scale, radii,
+shadow set, and motion tokens. The original theme — a bright-blue page
+background behind near-black panels — has been replaced entirely with a coherent,
+intentional light system.
+
+> If the TRA brand is ever unavailable, the documented fallback is the Omani
+> national flag palette: white `#FFFFFF`, red `#DB161B`, green `#008000`.
+
+---
+
+## Explainability & calibration
+
+**Temporal evidence (honest).** The visual model already scores each sampled
+frame and the audio model scores windows of the clip; those per-unit scores are
+returned and rendered as:
+
+- a **per-frame likelihood heat strip** — *where in time* the model's suspicion
+  came from (this is a timeline heatmap, **not** a per-pixel saliency map); and
+- a **windowed audio timeline** — how the synthetic-speech likelihood varies
+  across the clip.
+
+The overall sub-scores are unchanged by these views — they are explanations of
+the same numbers, not new ones.
+
+**Calibration (opt-in, off by default).** We deliberately do **not** ship a
+fabricated calibration curve (that needs a labelled validation set we don't
+have). Instead, `VIDEO_AI_CALIBRATION_ENABLED=true` enables *uncertainty-aware
+shrinkage*: scores derived from little signal (few scored frames, very short
+audio) are pulled toward the neutral 50 prior, so a "90% fake" from a single
+frame is reported less confidently than the same number from many frames. When
+it changes a score, the API exposes the pre-calibration value as `raw_score` and
+the UI shows "raw → calibrated". With calibration off, the raw model numbers are
+reported exactly. **No accuracy claim is implied in either mode.**
 
 ---
 
@@ -245,22 +312,80 @@ Observed pipeline behavior (verified during development):
 | Case | Behavior |
 |------|----------|
 | No face detected in any frame | Falls back to scoring full frames; `visual.detail` says so |
-| No audio track | `audio.status = "not_assessed"`, `reason = "The video has no audio track."` |
-| Silent / near-silent audio (incl. music-only, via a cheap RMS check) | `audio.status = "not_assessed"`, `reason` explains it was skipped |
-| Corrupt / unreadable file | `422 Unprocessable Entity` with a clear ffprobe-derived message; never crashes |
-| Very short video (< 2s) | Still analyzed; a warning is added (`warnings: [...]`) |
-| Oversized file (> 100MB) or too long (> 60s) | `413 Payload Too Large` with a clear message, rejected before any model runs |
-| Wrong file type | `400 Bad Request` listing allowed extensions |
-| Model fails to load | Falls back to the documented alternative; if both fail, the modality is `"not_assessed"` with the load error message — never crashes |
+| No audio track | `audio.status = "not_assessed"`, reason explains it |
+| Silent / near-silent / music-only audio (cheap RMS check) | `not_assessed`; the model is skipped |
+| Corrupt / unreadable file | `422` with a clear ffprobe-derived message; never crashes |
+| Very short video (< 2 s) | Still analyzed; a warning is added |
+| Oversized (> 100 MB) or too long (> 60 s) | `413`, rejected before any model runs |
+| Wrong file type | `400` listing allowed extensions (also caught client-side) |
+| Model fails to load | Falls back to the alternate; if both fail, `not_assessed` with the error — never crashes |
 
 ---
 
-## Disclaimer
+## Tests
 
-The score reflects the **likelihood that the video matches generation
-patterns the underlying detectors were trained to recognize** — it is
-**not proof** that a video is real or AI-generated. These detectors
-generalize poorly to generation methods they have never seen, and confident-
-looking numbers can still be wrong in either direction. **Do not treat the
-0–100 number as authoritative ground truth.** This disclaimer is shown
-prominently in the UI on every result.
+The suite mocks the model pipelines, so it runs **without** downloading any
+weights (and skips the audio tests cleanly if `soundfile` isn't installed). The
+corrupt-file test uses the real `ffprobe`.
+
+```bash
+cd backend
+pip install -r requirements-dev.txt
+pytest
+```
+
+Coverage: label → P(fake) matching, fusion math + confidence bands, calibration
+math (identity + shrinkage), and pipeline/HTTP edge cases (no frames, silent /
+empty / missing audio, model-load failure, unrecognized labels, and the
+`400` / `413` / `422` responses).
+
+---
+
+## Project structure
+
+```
+video-ai/
+├── backend/
+│   ├── app/
+│   │   ├── main.py            FastAPI app factory + /api routes + static UI
+│   │   ├── settings.py        ★ env-driven config (model IDs, weights, limits, CORS)
+│   │   ├── pipeline.py        end-to-end orchestration + edge-case handling
+│   │   ├── video_utils.py     ffmpeg/ffprobe: probing, frame & audio extraction
+│   │   ├── visual_model.py    face detection + visual scoring + per-frame timeline
+│   │   ├── audio_model.py     silence check + audio scoring + windowed timeline
+│   │   ├── labels.py          shared label → P(fake) mapping
+│   │   ├── calibration.py     opt-in uncertainty-aware calibration
+│   │   ├── fusion.py          weighted-average fusion + confidence band
+│   │   ├── model_runtime.py   lazy model loading, device selection, fallback
+│   │   └── schemas.py         pydantic response models
+│   ├── tests/                 pytest suite (models mocked)
+│   ├── requirements.txt       pinned deps (CPU torch by default)
+│   ├── requirements-dev.txt   + pytest, httpx
+│   ├── pyproject.toml         pytest config
+│   └── .env.example
+├── frontend/
+│   ├── index.html             semantic, accessible single-page UI
+│   ├── css/                   tokens.css · base.css · components.css
+│   └── js/                    main · api · dropzone · progress · charts · results · …
+├── Dockerfile                 single image, ffmpeg + CPU torch
+├── docker-compose.yml         one-command run + model cache volume
+└── README.md
+```
+
+---
+
+## Honest limitations
+
+The score reflects the **likelihood that the video matches generation patterns
+the underlying detectors were trained to recognize** — it is **not proof** that
+a video is real or AI-generated:
+
+- These detectors **generalize poorly** to generation methods they have never
+  seen. A brand-new model can fool them in either direction.
+- The audio model assesses **speech**; music-only or silent tracks are reported
+  as "not assessed", not as "real".
+- Raw probabilities are **not calibrated to a ground-truth accuracy** (see the
+  calibration note above).
+- Confident-looking numbers can still be wrong. **Do not treat the 0–100 number
+  as authoritative ground truth** — use it as one signal among many. This
+  disclaimer is shown prominently in the UI on every result.
