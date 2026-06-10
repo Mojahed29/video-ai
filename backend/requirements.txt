@@ -1,9 +1,14 @@
+# --- Web framework ---------------------------------------------------------
 fastapi==0.115.6
 uvicorn[standard]==0.34.0
 python-multipart==0.0.20
+pydantic==2.10.4
+pydantic-settings==2.7.0
 
-# CPU build by default; if you have a CUDA GPU, install a matching torch build
-# from https://pytorch.org/get-started/locally/ BEFORE installing this file.
+# --- ML runtime ------------------------------------------------------------
+# CPU build by default. If you have a CUDA GPU, install a matching torch build
+# from https://pytorch.org/get-started/locally/ BEFORE installing this file
+# (pip will then reuse your GPU build). The app auto-detects CUDA at runtime.
 # Versions pinned to satisfy facenet-pytorch's torch/torchvision/pillow/numpy ranges.
 torch==2.2.2
 torchvision==0.17.2
@@ -13,6 +18,7 @@ transformers==4.47.1
 huggingface-hub==0.27.0
 facenet-pytorch==2.6.0
 
+# --- Media I/O -------------------------------------------------------------
 pillow==10.2.0
 numpy==1.26.4
 soundfile==0.12.1

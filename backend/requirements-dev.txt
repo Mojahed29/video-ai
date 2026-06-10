@@ -1,0 +1,6 @@
+# Development / test dependencies (in addition to requirements.txt).
+# The unit tests mock the model pipelines, so torch/transformers are NOT
+# required just to run the tests for fusion, labels, and calibration.
+-r requirements.txt
+pytest==8.3.4
+httpx==0.28.1

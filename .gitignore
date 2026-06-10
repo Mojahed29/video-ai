@@ -1,6 +1,17 @@
+# Python
 __pycache__/
 *.pyc
 .venv/
 venv/
 *.egg-info/
+.pytest_cache/
+.ruff_cache/
+
+# Environment / secrets
+.env
+
+# OS
 .DS_Store
+
+# Model cache (downloaded from Hugging Face on first run)
+.cache/
